@@ -1,31 +1,31 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
-from agents import Agent, Runner
-from agents.mcp import MCPServerStdio
-
+from .codex_cli import run_codex
 from .config import RepoConfig, Settings
 from .git_ops import branch_name, commit_all, ensure_branch, has_changes, push_branch, run_git
-from .github_client import GitHubClient
-from .linear_client import LinearClient
+from .local_github_client import LocalGitHubClient
+from .local_linear_client import LocalLinearClient
 from .locks import lock_for_repo
 from .models import LinearIssue, ReviewResult
-from .reviewer_tools import build_reviewer_tools
 
 
 class Orchestrator:
     def __init__(
         self,
         settings: Settings,
-        linear: LinearClient | None = None,
-        github: GitHubClient | None = None,
+        linear: LocalLinearClient | None = None,
+        github: LocalGitHubClient | None = None,
     ) -> None:
         self.settings = settings
-        self.linear = linear or LinearClient(settings.linear_api_key, dry_run=settings.dry_run)
-        self.github = github or GitHubClient(settings.github_token, dry_run=settings.dry_run)
+        self.linear = linear or LocalLinearClient(
+            Path.cwd(),
+            dry_run=settings.dry_run,
+            model=settings.codex_model,
+        )
+        self.github = github or LocalGitHubClient(dry_run=settings.dry_run)
 
     async def close(self) -> None:
         await self.linear.close()
@@ -61,9 +61,7 @@ class Orchestrator:
             return labeled_matches[0]
         if len(labeled_matches) > 1:
             labels = ", ".join(repo.label or "" for repo in labeled_matches)
-            raise RuntimeError(
-                f"Multiple repository labels matched {issue.identifier}: {labels}"
-            )
+            raise RuntimeError(f"Multiple repository labels matched {issue.identifier}: {labels}")
         try:
             return self.settings.repo_map[issue.team_key]
         except KeyError as exc:
@@ -118,74 +116,38 @@ class Orchestrator:
         print(f"Opened/updated PR for {issue.identifier}: {pr.url}")
 
     async def _plan(self, issue: LinearIssue, repo: RepoConfig) -> str:
-        agent = Agent(
-            name="Planner",
-            model=self.settings.agent_model,
-            instructions=(
-                "You scope Linear software tasks before implementation. "
-                "Summarize acceptance criteria, likely files or areas, risks, and a compact plan. "
-                "If the task is vague, sensitive, or unsafe for automation, say BLOCKED clearly."
-            ),
+        plan = run_codex(
+            planner_prompt(issue, repo),
+            repo.path,
+            model=self.settings.codex_model,
+            sandbox="read-only",
+            timeout_seconds=900,
         )
-        prompt = issue_prompt(issue, repo)
-        result = await Runner.run(agent, prompt)
-        plan = str(result.final_output)
         if "BLOCKED" in plan.upper():
             await self.linear.comment(issue.id, f"Planner blocked automatic implementation.\n\n{plan}")
             raise RuntimeError(f"Planner blocked {issue.identifier}")
         return plan
 
     async def _implement(self, issue: LinearIssue, repo: RepoConfig, plan: str) -> None:
-        env = os.environ.copy()
-        env["OPENAI_API_KEY"] = self.settings.openai_api_key
-        async with MCPServerStdio(
-            name="codex",
-            params={
-                "command": "codex",
-                "args": [
-                    "mcp-server",
-                    "-c",
-                    f'model="{self.settings.codex_model}"',
-                    "-c",
-                    f'sandbox_mode="{self.settings.codex_sandbox}"',
-                ],
-                "env": env,
-            },
-            cache_tools_list=True,
-            require_approval="never",
-        ) as codex_server:
-            agent = Agent(
-                name="Implementer",
-                model=self.settings.agent_model,
-                instructions=(
-                    "You implement scoped software changes by using the Codex MCP tools. "
-                    "Work only in the target repository and branch. "
-                    "Do not push, create PRs, or move Linear issues. "
-                    "Stop after implementation and report changed behavior."
-                ),
-                mcp_servers=[codex_server],
-                mcp_config={"include_server_in_tool_names": True},
-            )
-            await Runner.run(agent, implementation_prompt(issue, repo.path, plan))
+        run_codex(
+            implementation_prompt(issue, repo.path, plan),
+            repo.path,
+            model=self.settings.codex_model,
+            sandbox=self.settings.codex_sandbox,
+        )
 
     async def _review(self, issue: LinearIssue, repo: RepoConfig, plan: str) -> ReviewResult:
-        agent = Agent(
-            name="Reviewer",
-            model=self.settings.agent_model,
-            instructions=(
-                "You are a strict read-only code reviewer. Use tools to inspect git status, "
-                "diff, and tests. You cannot modify files. End with exactly one line containing "
-                "REVIEW_DECISION: PASS or REVIEW_DECISION: FAIL, followed by a concise rationale."
-            ),
-            tools=build_reviewer_tools(repo.path, self.settings.test_command),
+        summary = run_codex(
+            review_prompt(issue, plan, self.settings.test_command),
+            repo.path,
+            model=self.settings.codex_model,
+            sandbox="read-only",
+            timeout_seconds=1800,
         )
-        result = await Runner.run(agent, review_prompt(issue, plan))
-        summary = str(result.final_output)
-        tests = "See reviewer transcript in Agents SDK trace; final summary captured here."
         return ReviewResult(
             passed="REVIEW_DECISION: PASS" in summary,
             summary=summary,
-            tests=tests,
+            tests="See reviewer summary.",
         )
 
 
@@ -204,6 +166,17 @@ Description:
 """.strip()
 
 
+def planner_prompt(issue: LinearIssue, repo: RepoConfig) -> str:
+    return f"""
+You are the planner for an automated software workflow.
+Scope this Linear task before implementation. Summarize acceptance criteria,
+likely files or areas, risks, and a compact implementation plan.
+If the task is vague, sensitive, or unsafe for automation, say BLOCKED clearly.
+
+{issue_prompt(issue, repo)}
+""".strip()
+
+
 def implementation_prompt(issue: LinearIssue, repo_path: Path, plan: str) -> str:
     return f"""
 Implement this Linear issue in the repository at {repo_path}.
@@ -218,12 +191,21 @@ Requirements:
 - Make focused code changes for the requested behavior.
 - Add or update tests when the change warrants it.
 - Do not push or create a pull request.
+- Do not move or comment on Linear issues.
 - Leave a clean working tree except for intentional changes.
 """.strip()
 
 
-def review_prompt(issue: LinearIssue, plan: str) -> str:
+def review_prompt(issue: LinearIssue, plan: str, test_command: str | None) -> str:
+    test_instruction = (
+        f'Run this test command and include the result: "{test_command}".'
+        if test_command
+        else "No TEST_COMMAND is configured; inspect the diff and run obvious lightweight checks if available."
+    )
     return f"""
+You are a strict read-only code reviewer. You may inspect files and run read-only
+commands, but do not modify files.
+
 Review the implementation for {issue.identifier}: {issue.title}.
 
 Acceptance scope:
@@ -232,8 +214,11 @@ Acceptance scope:
 Check:
 - git status
 - diff against HEAD
-- configured tests
+- {test_instruction}
 - whether the changes satisfy the issue without unrelated edits
+
+End with exactly one line containing REVIEW_DECISION: PASS or REVIEW_DECISION: FAIL,
+followed by a concise rationale.
 """.strip()
 
 

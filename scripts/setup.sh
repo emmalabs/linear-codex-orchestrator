@@ -12,7 +12,7 @@ python -m pip install -e ".[dev]"
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "Created .env from .env.example. Fill in the API keys and REPO_MAP_JSON next."
+  echo "Created .env from .env.example. Check REPO_MAP_JSON before running."
 else
   echo ".env already exists; left it unchanged."
 fi

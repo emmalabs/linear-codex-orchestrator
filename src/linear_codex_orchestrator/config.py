@@ -16,10 +16,8 @@ class RepoConfig:
 
 @dataclass(frozen=True)
 class Settings:
-    openai_api_key: str
-    linear_api_key: str
-    github_token: str
     repo_map: dict[str, RepoConfig]
+    auth_mode: str = "local"
     ready_label: str | None = None
     running_label: str = "agent-running"
     todo_status: str = "Todo"
@@ -30,7 +28,6 @@ class Settings:
     dry_run: bool = True
     test_command: str | None = None
     codex_model: str = "gpt-5.2-codex"
-    agent_model: str = "gpt-5.4"
     codex_sandbox: str = "workspace-write"
 
     @classmethod
@@ -47,10 +44,8 @@ class Settings:
             for key, value in repo_map_data.items()
         }
         return cls(
-            openai_api_key=require_env("OPENAI_API_KEY"),
-            linear_api_key=require_env("LINEAR_API_KEY"),
-            github_token=require_env("GITHUB_TOKEN"),
             repo_map=repo_map,
+            auth_mode=os.getenv("AUTH_MODE", "local"),
             ready_label=os.getenv("LINEAR_READY_LABEL") or None,
             running_label=os.getenv("LINEAR_RUNNING_LABEL", "agent-running"),
             todo_status=os.getenv("LINEAR_TODO_STATUS", "Todo"),
@@ -61,13 +56,5 @@ class Settings:
             dry_run=os.getenv("DRY_RUN", "true").lower() in {"1", "true", "yes"},
             test_command=os.getenv("TEST_COMMAND") or None,
             codex_model=os.getenv("CODEX_MODEL", "gpt-5.2-codex"),
-            agent_model=os.getenv("AGENT_MODEL", "gpt-5.4"),
             codex_sandbox=os.getenv("CODEX_SANDBOX", "workspace-write"),
         )
-
-
-def require_env(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value

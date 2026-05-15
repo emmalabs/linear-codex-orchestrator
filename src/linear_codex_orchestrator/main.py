@@ -3,10 +3,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from dotenv import load_dotenv
-
 from .config import Settings
 from .orchestrator import Orchestrator
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv() -> None:
+        return None
 
 
 async def async_main() -> None:
@@ -33,4 +37,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

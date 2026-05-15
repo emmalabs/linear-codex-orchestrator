@@ -1,14 +1,20 @@
 # emma-linear-codex-orchestrator
 
-Small Python service that polls Linear Todo issues and uses the OpenAI Agents SDK to coordinate:
+Small local service that polls Linear Todo issues and coordinates your existing command-line tools:
 
-1. A planner agent that scopes the Linear issue.
-2. A Codex-backed implementer agent connected through `codex mcp-server`.
-3. A reviewer agent that can inspect status, diff, and test output but cannot edit.
-4. GitHub PR creation/update.
-5. Linear comments and status transitions.
+1. Codex CLI for planning, implementation, and review.
+2. Linear MCP, through Codex CLI, for polling issues, moving status, labels, and comments.
+3. GitHub CLI for draft PR creation/update.
 
 By default, every Todo issue is eligible. Set `LINEAR_READY_LABEL` if you later want an explicit label gate such as `codex-ready`.
+
+## Prerequisites
+
+No API keys are required in `.env`.
+
+- `codex` is installed and logged in.
+- `codex mcp list` shows Linear enabled and authenticated.
+- `gh` is installed and authenticated with access to `emmalabs`.
 
 ## Quick Start
 
@@ -17,7 +23,7 @@ cd emma-linear-codex-orchestrator
 ./scripts/setup.sh
 ```
 
-Fill in `.env`, then run one polling tick:
+Check `.env`, then run one polling tick:
 
 ```bash
 . .venv/bin/activate
@@ -30,7 +36,7 @@ Run continuously with a 15-minute interval:
 emma-linear-codex-orchestrator daemon
 ```
 
-Or schedule `emma-linear-codex-orchestrator once` from cron, GitHub Actions, Cloud Run, or another scheduler.
+Or schedule `emma-linear-codex-orchestrator once` from cron or systemd on this WSL machine.
 
 ## Required Config
 
@@ -62,17 +68,6 @@ If no repository label is present, the key can still fall back to the Linear tea
 - A local lock file prevents concurrent work per repository.
 - Each issue gets its own branch: `codex/<ISSUE-ID>-<slug>`.
 - The service never pushes to `main`.
-- The reviewer agent only receives read-only tools.
+- The reviewer runs Codex in read-only sandbox mode.
 - `DRY_RUN=true` avoids mutating GitHub/Linear and skips pushing.
 - Human merge approval remains outside this service.
-
-## GitHub Actions Schedule
-
-Copy `.github/workflows/orchestrator.yml` into the deployment repo and configure secrets:
-
-- `OPENAI_API_KEY`
-- `LINEAR_API_KEY`
-- `GH_PAT`
-- `REPO_MAP_JSON`
-
-For real deployments, prefer a runner that has the target repositories already checked out at stable paths.

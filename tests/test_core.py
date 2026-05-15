@@ -38,9 +38,6 @@ class CoreTests(unittest.TestCase):
 
     def test_settings_from_env_parses_repo_map(self) -> None:
         env = {
-            "OPENAI_API_KEY": "openai",
-            "LINEAR_API_KEY": "linear",
-            "GITHUB_TOKEN": "github",
             "REPO_MAP_JSON": '{"ENG":{"github":"acme/web","path":"/tmp/web","base":"develop"}}',
             "DRY_RUN": "false",
         }
@@ -53,9 +50,6 @@ class CoreTests(unittest.TestCase):
 
     def test_settings_from_env_parses_repo_label(self) -> None:
         env = {
-            "OPENAI_API_KEY": "openai",
-            "LINEAR_API_KEY": "linear",
-            "GITHUB_TOKEN": "github",
             "REPO_MAP_JSON": (
                 '{"api":{"github":"emmalabs/emma.db-api",'
                 '"path":"/home/aleix/Projects/emma.db/emma-api",'
