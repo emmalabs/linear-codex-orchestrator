@@ -27,7 +27,7 @@ class Settings:
     lock_dir: Path = Path(".locks")
     dry_run: bool = True
     test_command: str | None = None
-    codex_model: str = "gpt-5.2-codex"
+    codex_model: str | None = None
     codex_sandbox: str = "workspace-write"
 
     @classmethod
@@ -55,6 +55,6 @@ class Settings:
             lock_dir=Path(os.getenv("LOCK_DIR", ".locks")),
             dry_run=os.getenv("DRY_RUN", "true").lower() in {"1", "true", "yes"},
             test_command=os.getenv("TEST_COMMAND") or None,
-            codex_model=os.getenv("CODEX_MODEL", "gpt-5.2-codex"),
+            codex_model=os.getenv("CODEX_MODEL") or None,
             codex_sandbox=os.getenv("CODEX_SANDBOX", "workspace-write"),
         )

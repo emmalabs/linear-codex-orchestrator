@@ -24,6 +24,7 @@ class Orchestrator:
             Path.cwd(),
             dry_run=settings.dry_run,
             model=settings.codex_model,
+            route_labels=self._repo_labels(settings),
         )
         self.github = github or LocalGitHubClient(dry_run=settings.dry_run)
 
@@ -35,10 +36,20 @@ class Orchestrator:
         issues = await self.linear.ready_issues(
             self.settings.todo_status,
             self.settings.ready_label,
-            self.settings.max_issues_per_tick,
+            max(self.settings.max_issues_per_tick * 5, 5),
         )
+        processed = 0
         for issue in issues:
+            if processed >= self.settings.max_issues_per_tick:
+                break
+            if not self.can_resolve_repo(issue):
+                print(
+                    f"Skipping {issue.identifier}: add one repo label "
+                    f"({', '.join(self.repo_labels())})"
+                )
+                continue
             await self.process_issue(issue)
+            processed += 1
 
     async def run_forever(self, interval_seconds: int = 900) -> None:
         while True:
@@ -52,6 +63,20 @@ class Orchestrator:
                 print(f"Skipping {issue.identifier}: repo lock is already held for {repo.github}")
                 return
             await self._process_locked_issue(issue, repo)
+
+    def can_resolve_repo(self, issue: LinearIssue) -> bool:
+        try:
+            self.resolve_repo(issue)
+        except RuntimeError:
+            return False
+        return True
+
+    def repo_labels(self) -> list[str]:
+        return self._repo_labels(self.settings)
+
+    @staticmethod
+    def _repo_labels(settings: Settings) -> list[str]:
+        return sorted(repo.label for repo in settings.repo_map.values() if repo.label)
 
     def resolve_repo(self, issue: LinearIssue) -> RepoConfig:
         labeled_matches = [

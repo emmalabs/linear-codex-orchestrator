@@ -15,6 +15,7 @@ No API keys are required in `.env`.
 - `codex` is installed and logged in.
 - `codex mcp list` shows Linear enabled and authenticated.
 - `gh` is installed and authenticated with access to `emmalabs`.
+- Leave `CODEX_MODEL` empty unless you know a specific model works with your Codex account.
 
 ## Quick Start
 

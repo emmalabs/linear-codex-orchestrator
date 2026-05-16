@@ -75,15 +75,22 @@ def run_codex(
                 schema_file.flush()
                 command.extend(["--output-schema", schema_file.name])
             command.append(prompt)
-            subprocess.run(
+            result = subprocess.run(
                 command,
                 cwd=cwd,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                check=True,
+                stdin=subprocess.DEVNULL,
                 timeout=timeout_seconds,
             )
+            if result.returncode != 0:
+                output_file.seek(0)
+                last_message = output_file.read().strip()
+                raise RuntimeError(
+                    "codex exec failed with exit code "
+                    f"{result.returncode}\n\n{result.stdout.strip()}\n\n{last_message}"
+                )
             output_file.seek(0)
             return output_file.read().strip()
         finally:
@@ -100,4 +107,3 @@ def parse_json_object(raw: str) -> dict[str, Any]:
         if start == -1 or end == -1 or end <= start:
             raise
         return json.loads(raw[start : end + 1])
-

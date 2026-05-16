@@ -13,10 +13,12 @@ class LocalLinearClient:
         *,
         dry_run: bool = False,
         model: str | None = None,
+        route_labels: list[str] | None = None,
     ) -> None:
         self._cwd = cwd
         self._dry_run = dry_run
         self._model = model
+        self._route_labels = route_labels or []
 
     async def close(self) -> None:
         return None
@@ -24,11 +26,17 @@ class LocalLinearClient:
     async def ready_issues(
         self, status: str, label: str | None, limit: int
     ) -> list[LinearIssue]:
-        label_clause = f' and label exactly "{label}"' if label else ""
+        filters = [f'status exactly "{status}"']
+        if label:
+            filters.append(f'label exactly "{label}"')
+        if self._route_labels:
+            labels = ", ".join(f'"{route_label}"' for route_label in self._route_labels)
+            filters.append(f"at least one of these labels: {labels}")
+        filter_text = " and ".join(filters)
         prompt = f"""
 Use the configured Linear MCP tools.
 
-Find up to {limit} Linear issues with status exactly "{status}"{label_clause}.
+Find up to {limit} Linear issues with {filter_text}.
 Return only JSON matching the provided schema. For each issue include:
 id, identifier, title, description, url, team_key, team_name, state_name, labels.
 If there are no matching issues, return {{"issues":[]}}.
@@ -84,4 +92,3 @@ Use the configured Linear MCP tools. Complete this Linear mutation:
 After the mutation, respond with one concise sentence.
 """.strip()
         run_codex(prompt, self._cwd, model=self._model, sandbox="read-only", timeout_seconds=900)
-
