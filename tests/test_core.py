@@ -11,6 +11,7 @@ from linear_codex_orchestrator.git_ops import branch_name
 from linear_codex_orchestrator.orchestrator import truncate_text
 from linear_codex_orchestrator.models import parse_linear_issue
 from linear_codex_orchestrator.locks import lock_for_repo
+from linear_codex_orchestrator.prompt_templates import render_prompt
 
 
 class CoreTests(unittest.TestCase):
@@ -77,6 +78,17 @@ class CoreTests(unittest.TestCase):
     def test_truncate_text_marks_truncated_content(self) -> None:
         self.assertEqual(truncate_text("short", 10), "short")
         self.assertEqual(truncate_text("0123456789abcdef", 10), "0123456789\n\n...[truncated]")
+
+    def test_render_prompt_loads_markdown_template(self) -> None:
+        prompt = render_prompt("implementation.md", **{
+            "workspace_path": "/tmp/workspace",
+            "issue_identifier": "EMMA-1",
+            "issue_title": "Test issue",
+            "issue_url": "https://linear.app/example/issue/EMMA-1",
+            "plan": "Do the smallest useful thing.",
+        })
+        self.assertIn("EMMA-1", prompt)
+        self.assertIn("/tmp/workspace", prompt)
 
 
 if __name__ == "__main__":

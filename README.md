@@ -59,6 +59,16 @@ Or schedule `./scripts/run.sh once` from cron or systemd on this WSL machine.
 
 For the `emma.db` workspace, Codex can change any of the configured repos: `api`, `app`, `data`, and `docker`. No Linear repo labels are required.
 
+## Prompts
+
+Codex prompts live in Markdown files under `prompts/`:
+
+- `planner.md`
+- `implementation.md`
+- `reviewer.md`
+
+Edit those files to tune behavior without changing Python code.
+
 ## Safety Model
 
 - Todo issues are processed by default; `LINEAR_READY_LABEL` can optionally narrow the queue.

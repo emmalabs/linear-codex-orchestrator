@@ -10,6 +10,7 @@ from .local_github_client import LocalGitHubClient
 from .local_linear_client import LocalLinearClient
 from .locks import lock_for_repo
 from .models import LinearIssue, PullRequest, ReviewResult
+from .prompt_templates import render_prompt
 
 
 class Orchestrator:
@@ -193,34 +194,18 @@ Description:
 
 
 def planner_prompt(issue: LinearIssue, workspace: WorkspaceConfig) -> str:
-    return f"""
-You are the planner for an automated multi-repository software workflow.
-Scope this Linear task before implementation. Decide which candidate repositories
-are likely involved, summarize acceptance criteria, risks, and a compact plan.
-If the task is vague, sensitive, or unsafe for automation, say BLOCKED clearly.
-
-{issue_prompt(issue, workspace)}
-""".strip()
+    return render_prompt("planner.md", issue_context=issue_prompt(issue, workspace))
 
 
 def implementation_prompt(issue: LinearIssue, workspace: WorkspaceConfig, plan: str) -> str:
-    return f"""
-Implement this Linear issue in the workspace at {workspace.path}.
-
-Issue: {issue.identifier} - {issue.title}
-URL: {issue.url}
-
-Planner scope:
-{plan}
-
-Requirements:
-- Work across any candidate repositories needed to satisfy the issue.
-- Make focused code changes only in the listed candidate repositories.
-- Add or update tests when the change warrants it.
-- Do not push or create pull requests.
-- Do not move or comment on Linear issues.
-- Leave each repo with only intentional changes.
-""".strip()
+    return render_prompt(
+        "implementation.md",
+        workspace_path=workspace.path,
+        issue_identifier=issue.identifier,
+        issue_title=issue.title,
+        issue_url=issue.url,
+        plan=plan,
+    )
 
 
 def review_prompt(
@@ -239,26 +224,14 @@ def review_prompt(
         if test_command
         else "No TEST_COMMAND is configured; inspect diffs and run obvious lightweight checks if available."
     )
-    return f"""
-You are a strict read-only code reviewer. You may inspect files and run read-only
-commands, but do not modify files.
-
-Review the implementation for {issue.identifier}: {issue.title}.
-
-Acceptance scope:
-{plan}
-
-Changed repositories:
-{changed}
-
-Check:
-- git status and diff in each changed repo
-- {test_instruction}
-- whether the changes satisfy the issue without unrelated edits
-
-End with exactly one line containing REVIEW_DECISION: PASS or REVIEW_DECISION: FAIL,
-followed by a concise rationale.
-""".strip()
+    return render_prompt(
+        "reviewer.md",
+        issue_identifier=issue.identifier,
+        issue_title=issue.title,
+        plan=plan,
+        changed_repos=changed,
+        test_instruction=test_instruction,
+    )
 
 
 def pr_description(
