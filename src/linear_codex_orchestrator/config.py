@@ -11,12 +11,17 @@ class RepoConfig:
     github: str
     path: Path
     base: str = "main"
-    label: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkspaceConfig:
+    path: Path
+    repos: dict[str, RepoConfig]
 
 
 @dataclass(frozen=True)
 class Settings:
-    repo_map: dict[str, RepoConfig]
+    workspace_map: dict[str, WorkspaceConfig]
     auth_mode: str = "local"
     ready_label: str | None = None
     running_label: str = "agent-running"
@@ -32,19 +37,24 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        repo_map_raw = os.getenv("REPO_MAP_JSON", "{}")
-        repo_map_data = json.loads(repo_map_raw)
-        repo_map = {
-            key: RepoConfig(
-                github=value["github"],
+        workspace_map_raw = os.getenv("WORKSPACE_MAP_JSON") or os.getenv("REPO_MAP_JSON", "{}")
+        workspace_map_data = json.loads(workspace_map_raw)
+        workspace_map = {
+            key: WorkspaceConfig(
                 path=Path(value["path"]).expanduser(),
-                base=value.get("base", "main"),
-                label=value.get("label"),
+                repos={
+                    repo_key: RepoConfig(
+                        github=repo_value["github"],
+                        path=Path(repo_value["path"]).expanduser(),
+                        base=repo_value.get("base", "main"),
+                    )
+                    for repo_key, repo_value in value.get("repos", {}).items()
+                },
             )
-            for key, value in repo_map_data.items()
+            for key, value in workspace_map_data.items()
         }
         return cls(
-            repo_map=repo_map,
+            workspace_map=workspace_map,
             auth_mode=os.getenv("AUTH_MODE", "local"),
             ready_label=os.getenv("LINEAR_READY_LABEL") or None,
             running_label=os.getenv("LINEAR_RUNNING_LABEL", "agent-running"),

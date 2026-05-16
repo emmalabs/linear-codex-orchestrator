@@ -40,33 +40,30 @@ Or schedule `./scripts/run.sh once` from cron or systemd on this WSL machine.
 
 ## Required Config
 
-`REPO_MAP_JSON` maps Linear issues to checked-out repositories:
+`WORKSPACE_MAP_JSON` maps the single Linear team to the local multi-repo workspace:
 
 ```json
 {
-  "api": {
-    "github": "emmalabs/emma.db-api",
-    "path": "/home/aleix/Projects/emma.db/emma-api",
-    "base": "develop",
-    "label": "repo:api"
+  "EMMA": {
+    "path": "/home/aleix/Projects/emma.db",
+    "repos": {
+      "api": {
+        "github": "emmalabs/emma.db-api",
+        "path": "/home/aleix/Projects/emma.db/emma-api",
+        "base": "develop"
+      }
+    }
   }
 }
 ```
 
-For the `emma.db` workspace, route Linear issues with one of these labels:
-
-- `repo:api`
-- `repo:app`
-- `repo:data`
-- `repo:docker`
-
-If no repository label is present, the key can still fall back to the Linear team key.
+For the `emma.db` workspace, Codex can change any of the configured repos: `api`, `app`, `data`, and `docker`. No Linear repo labels are required.
 
 ## Safety Model
 
 - Todo issues are processed by default; `LINEAR_READY_LABEL` can optionally narrow the queue.
-- A local lock file prevents concurrent work per repository.
-- Each issue gets its own branch: `codex/<ISSUE-ID>-<slug>`.
+- A local lock file prevents concurrent work per workspace.
+- Each issue gets the same branch name in every candidate repo: `codex/<ISSUE-ID>-<slug>`.
 - The service never pushes to `main`.
 - The reviewer runs Codex in read-only sandbox mode.
 - `DRY_RUN=true` avoids mutating GitHub/Linear and skips pushing.

@@ -13,12 +13,10 @@ class LocalLinearClient:
         *,
         dry_run: bool = False,
         model: str | None = None,
-        route_labels: list[str] | None = None,
     ) -> None:
         self._cwd = cwd
         self._dry_run = dry_run
         self._model = model
-        self._route_labels = route_labels or []
 
     async def close(self) -> None:
         return None
@@ -29,9 +27,6 @@ class LocalLinearClient:
         filters = [f'status exactly "{status}"']
         if label:
             filters.append(f'label exactly "{label}"')
-        if self._route_labels:
-            labels = ", ".join(f'"{route_label}"' for route_label in self._route_labels)
-            filters.append(f"at least one of these labels: {labels}")
         filter_text = " and ".join(filters)
         prompt = f"""
 Use the configured Linear MCP tools.

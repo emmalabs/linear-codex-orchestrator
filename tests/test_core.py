@@ -38,27 +38,31 @@ class CoreTests(unittest.TestCase):
 
     def test_settings_from_env_parses_repo_map(self) -> None:
         env = {
-            "REPO_MAP_JSON": '{"ENG":{"github":"acme/web","path":"/tmp/web","base":"develop"}}',
+            "WORKSPACE_MAP_JSON": (
+                '{"ENG":{"path":"/tmp/workspace","repos":'
+                '{"web":{"github":"acme/web","path":"/tmp/web","base":"develop"}}}}'
+            ),
             "DRY_RUN": "false",
         }
         with patch.dict(os.environ, env, clear=True):
             settings = Settings.from_env()
         self.assertFalse(settings.dry_run)
-        self.assertEqual(settings.repo_map["ENG"].github, "acme/web")
-        self.assertEqual(settings.repo_map["ENG"].path, Path("/tmp/web"))
-        self.assertEqual(settings.repo_map["ENG"].base, "develop")
+        self.assertEqual(settings.workspace_map["ENG"].path, Path("/tmp/workspace"))
+        self.assertEqual(settings.workspace_map["ENG"].repos["web"].github, "acme/web")
+        self.assertEqual(settings.workspace_map["ENG"].repos["web"].path, Path("/tmp/web"))
+        self.assertEqual(settings.workspace_map["ENG"].repos["web"].base, "develop")
 
-    def test_settings_from_env_parses_repo_label(self) -> None:
+    def test_settings_from_env_parses_emma_workspace(self) -> None:
         env = {
-            "REPO_MAP_JSON": (
+            "WORKSPACE_MAP_JSON": (
+                '{"EMMA":{"path":"/home/aleix/Projects/emma.db","repos":'
                 '{"api":{"github":"emmalabs/emma.db-api",'
-                '"path":"/home/aleix/Projects/emma.db/emma-api",'
-                '"base":"develop","label":"repo:api"}}'
+                '"path":"/home/aleix/Projects/emma.db/emma-api","base":"develop"}}}}'
             ),
         }
         with patch.dict(os.environ, env, clear=True):
             settings = Settings.from_env()
-        self.assertEqual(settings.repo_map["api"].label, "repo:api")
+        self.assertEqual(settings.workspace_map["EMMA"].repos["api"].github, "emmalabs/emma.db-api")
 
     def test_repo_lock_is_exclusive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

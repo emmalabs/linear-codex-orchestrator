@@ -39,3 +39,6 @@ def commit_all(repo_path: Path, message: str) -> None:
 def push_branch(repo_path: Path, branch: str) -> None:
     run_git(repo_path, "push", "-u", "origin", branch)
 
+
+def changed_files(repo_path: Path) -> str:
+    return run_git(repo_path, "status", "--porcelain")
