@@ -75,6 +75,12 @@ If there are no matching issues, return {{"issues":[]}}.
             f'Post this comment on Linear issue id "{issue_id}":\n\n{body}'
         )
 
+    async def attach_pr(self, issue_id: str, pr_url: str) -> None:
+        await self._mutate(
+            "Attach this pull request URL to the Linear issue if Linear supports PR attachments; "
+            f'otherwise add a concise comment with the URL. Issue id "{issue_id}", PR URL "{pr_url}".'
+        )
+
     async def _mutate(self, instruction: str) -> None:
         if self._dry_run:
             print(f"[dry-run] Linear MCP: {instruction}")

@@ -40,7 +40,7 @@ class Settings:
         workspace_map_raw = os.getenv("WORKSPACE_MAP_JSON") or os.getenv("REPO_MAP_JSON", "{}")
         workspace_map_data = json.loads(workspace_map_raw)
         workspace_map = {
-            key: WorkspaceConfig(
+            key.upper(): WorkspaceConfig(
                 path=Path(value["path"]).expanduser(),
                 repos={
                     repo_key: RepoConfig(

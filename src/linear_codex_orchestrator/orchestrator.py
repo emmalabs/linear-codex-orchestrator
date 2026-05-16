@@ -55,8 +55,9 @@ class Orchestrator:
             await self._process_locked_issue(issue, workspace)
 
     def resolve_workspace(self, issue: LinearIssue) -> WorkspaceConfig:
+        normalized_key = issue.team_key.upper()
         try:
-            return self.settings.workspace_map[issue.team_key]
+            return self.settings.workspace_map[normalized_key]
         except KeyError as exc:
             raise RuntimeError(
                 f"No WORKSPACE_MAP_JSON entry for Linear team key {issue.team_key}."
@@ -71,15 +72,19 @@ class Orchestrator:
             return
 
         try:
+            await self.linear.comment(issue.id, start_comment(issue, workspace, branch))
+            plan = await self._plan(issue, workspace)
+            await self.linear.comment(issue.id, plan_comment(plan))
             await self.linear.move_issue(issue.id, self.settings.in_progress_status)
             await self.linear.add_label(issue.id, self.settings.running_label)
             for repo in workspace.repos.values():
                 ensure_branch(repo.path, repo.base, branch)
 
-            plan = await self._plan(issue, workspace)
             await self._implement(issue, workspace, plan)
             changed_repos = self.changed_repos(workspace)
+            await self.linear.comment(issue.id, implementation_comment(changed_repos))
             review = await self._review(issue, workspace, plan, changed_repos)
+            await self.linear.comment(issue.id, review_comment(review))
         except Exception as exc:
             await self.linear.comment(issue.id, f"Codex orchestration failed:\n\n```text\n{exc}\n```")
             raise
@@ -110,10 +115,10 @@ class Orchestrator:
                 f"{issue.identifier}: {issue.title}",
                 pr_body,
             )
+            await self.linear.attach_pr(issue.id, pr.url)
             prs.append(pr)
 
-        links = "\n".join(f"- {pr.url}" for pr in prs)
-        await self.linear.comment(issue.id, f"Draft PRs ready for review:\n\n{links}")
+        await self.linear.comment(issue.id, pr_links_comment(prs))
         await self.linear.move_issue(issue.id, self.settings.in_review_status)
         print(f"Opened/updated {len(prs)} PR(s) for {issue.identifier}")
 
@@ -283,3 +288,69 @@ Repository: {repo_key}
 {diffstat}
 ```
 """.strip()
+
+
+def start_comment(issue: LinearIssue, workspace: WorkspaceConfig, branch: str) -> str:
+    repos = "\n".join(
+        f"- `{repo_key}`: `{repo.github}` from `{repo.base}`"
+        for repo_key, repo in workspace.repos.items()
+    )
+    return f"""
+Codex started work on `{issue.identifier}`.
+
+Branch: `{branch}`
+Workspace: `{workspace.path}`
+
+Candidate repositories:
+{repos}
+""".strip()
+
+
+def plan_comment(plan: str) -> str:
+    return f"""
+Codex plan:
+
+{truncate_markdown(plan)}
+""".strip()
+
+
+def implementation_comment(changed_repos: dict[str, RepoConfig]) -> str:
+    if not changed_repos:
+        return "Codex implementation finished. No repository changes were detected."
+    details = "\n\n".join(
+        f"### `{repo_key}`\n\n```text\n{truncate_text(changed_files(repo.path), 3000)}\n```"
+        for repo_key, repo in changed_repos.items()
+    )
+    return f"""
+Codex implementation finished. Changed repositories:
+
+{details}
+""".strip()
+
+
+def review_comment(review: ReviewResult) -> str:
+    decision = "passed" if review.passed else "failed"
+    return f"""
+Codex reviewer {decision}.
+
+{truncate_markdown(review.summary)}
+""".strip()
+
+
+def pr_links_comment(prs: list[PullRequest]) -> str:
+    links = "\n".join(f"- {pr.url}" for pr in prs)
+    return f"""
+Draft PRs ready for review:
+
+{links}
+""".strip()
+
+
+def truncate_markdown(value: str, limit: int = 6000) -> str:
+    return truncate_text(value.strip(), limit)
+
+
+def truncate_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit].rstrip()}\n\n...[truncated]"

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from linear_codex_orchestrator.config import Settings
 from linear_codex_orchestrator.git_ops import branch_name
+from linear_codex_orchestrator.orchestrator import truncate_text
 from linear_codex_orchestrator.models import parse_linear_issue
 from linear_codex_orchestrator.locks import lock_for_repo
 
@@ -72,6 +73,10 @@ class CoreTests(unittest.TestCase):
                 self.assertTrue(acquired.acquired)
                 with second as blocked:
                     self.assertFalse(blocked.acquired)
+
+    def test_truncate_text_marks_truncated_content(self) -> None:
+        self.assertEqual(truncate_text("short", 10), "short")
+        self.assertEqual(truncate_text("0123456789abcdef", 10), "0123456789\n\n...[truncated]")
 
 
 if __name__ == "__main__":
