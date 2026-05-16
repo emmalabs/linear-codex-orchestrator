@@ -3,12 +3,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-python3 -m venv .venv
-# shellcheck disable=SC1091
-. .venv/bin/activate
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+if ! "$PYTHON_BIN" - <<'PY'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 9) else 1)
+PY
+then
+  echo "$PYTHON_BIN must be Python 3.9 or newer."
+  exit 1
+fi
 
 if [ ! -f .env ]; then
   cp .env.example .env
@@ -18,6 +22,6 @@ else
 fi
 
 echo
-echo "Setup complete."
-echo "Run: . .venv/bin/activate"
-echo "Then: emma-linear-codex-orchestrator once"
+echo "Setup complete. No venv or API keys are required."
+echo "Run: ./scripts/run.sh once"
+

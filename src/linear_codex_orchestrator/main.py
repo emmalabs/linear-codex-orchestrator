@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 
 from .config import Settings
 from .orchestrator import Orchestrator
@@ -10,7 +11,18 @@ try:
     from dotenv import load_dotenv
 except ImportError:
     def load_dotenv() -> None:
-        return None
+        env_path = ".env"
+        try:
+            with open(env_path, encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except FileNotFoundError:
+            return None
 
 
 async def async_main() -> None:

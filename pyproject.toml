@@ -2,7 +2,7 @@
 name = "emma-linear-codex-orchestrator"
 version = "0.1.0"
 description = "Poll Linear issues and orchestrate local Codex implementation workflows."
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
   "python-dotenv>=1.0.1",
 ]

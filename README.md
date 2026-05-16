@@ -26,17 +26,16 @@ cd emma-linear-codex-orchestrator
 Check `.env`, then run one polling tick:
 
 ```bash
-. .venv/bin/activate
-DRY_RUN=true emma-linear-codex-orchestrator once
+DRY_RUN=true ./scripts/run.sh once
 ```
 
 Run continuously with a 15-minute interval:
 
 ```bash
-emma-linear-codex-orchestrator daemon
+DRY_RUN=false ./scripts/run.sh daemon
 ```
 
-Or schedule `emma-linear-codex-orchestrator once` from cron or systemd on this WSL machine.
+Or schedule `./scripts/run.sh once` from cron or systemd on this WSL machine.
 
 ## Required Config
 
