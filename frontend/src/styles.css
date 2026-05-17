@@ -56,25 +56,17 @@ body {
   max-width: 220px;
 }
 
-.formatted-log-message,
-.raw-log-viewer {
+.formatted-log-message {
   background: var(--mantine-color-dark-8);
   border: 1px solid var(--mantine-color-default-border);
   border-radius: var(--mantine-radius-sm);
   color: var(--mantine-color-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 12px;
-  line-height: 1.5;
+  font-family: var(--mantine-font-family);
+  font-size: 14px;
+  line-height: 1.6;
   margin: 0;
   overflow: auto;
   padding: var(--mantine-spacing-sm);
-  white-space: pre-wrap;
-}
-
-.formatted-log-message {
-  font-size: 14px;
-  font-family: var(--mantine-font-family);
-  line-height: 1.6;
   white-space: normal;
 }
 
@@ -109,10 +101,6 @@ body {
 .formatted-log-message pre code {
   background: transparent;
   padding: 0;
-}
-
-.raw-log-viewer {
-  min-height: 180px;
 }
 
 @media (max-width: 1150px) {

@@ -347,11 +347,24 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summary["headline"], "Removed the PR feedback limit.")
         self.assertEqual(summary["tokens_used"], 42250.0)
         self.assertEqual(summary["files"], [{"path": "src/app.py", "added": 1, "removed": 1}])
-        self.assertEqual(summary["summary_version"], 2)
+        self.assertEqual(summary["summary_version"], 3)
 
     def test_codex_log_summary_parses_dot_separated_token_thousands(self) -> None:
         self.assertEqual(tokens_used("\ntokens used\n135.878\nDone."), 135878.0)
         self.assertEqual(tokens_used("\ntokens used\n1.234.567\nDone."), 1234567.0)
+
+    def test_codex_log_summary_deduplicates_repo_prefixed_file_paths(self) -> None:
+        raw = (
+            "diff --git a/emma.db-app/src/app.ts b/emma.db-app/src/app.ts\n"
+            "+repo added\n"
+            "-repo removed\n"
+            "diff --git a/src/app.ts b/src/app.ts\n"
+            "+plain added\n"
+            "See [file](/tmp/workspace/emma.db-app/src/app.ts:1)\n"
+            "tokens used\n1\nDone."
+        )
+        summary = summarize_codex_log(Path(".logs/stage.log"), raw, "")
+        self.assertEqual(summary["files"], [{"path": "src/app.ts", "added": 2, "removed": 1}])
 
     def test_codex_log_summary_is_written_next_to_raw_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

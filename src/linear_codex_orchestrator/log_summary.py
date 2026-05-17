@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-SUMMARY_VERSION = 2
+SUMMARY_VERSION = 3
 
 
 def summary_path_for(log_path: Path) -> Path:
@@ -99,11 +99,11 @@ def changed_files_from_raw(raw: str) -> list[dict[str, Any]]:
         patch_match = re.match(r"\*\*\* (?:Update|Add|Delete) File: (.+)$", line)
         link_matches = re.findall(r"\]\((/[^):]+)(?::\d+)?\)", line)
         if diff_match:
-            current = diff_match.group(2)
+            current = normalize_path(diff_match.group(2))
             files.setdefault(current, {"path": current, "added": 0, "removed": 0})
             continue
         if patch_match:
-            current = patch_match.group(1)
+            current = normalize_path(patch_match.group(1))
             files.setdefault(current, {"path": current, "added": 0, "removed": 0})
             continue
         for link in link_matches:
@@ -121,7 +121,7 @@ def normalize_path(path: str) -> str:
     for marker in ("emma.db-api", "emma.db-app", "emma.db-data", "emma.db-docker"):
         if marker in parts:
             index = parts.index(marker)
-            return "/".join(parts[index:])
+            return "/".join(parts[index + 1 :])
     return path
 
 

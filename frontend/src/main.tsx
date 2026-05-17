@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { IconBrandGithub, IconExternalLink, IconFolder } from "@tabler/icons-react";
 import {
   Accordion,
   Anchor,
@@ -401,27 +402,25 @@ function IssueDetails({ issue }: { issue: IssueStatus }) {
             <Text mt={4}>{issue.title || "Untitled issue"}</Text>
           </Box>
           <Group gap="xs">
-            {prs[0] ? <Button component="a" href={prs[0]} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
-            {issue.project_url ? <Button component="a" href={issue.project_url} target="_blank" rel="noopener noreferrer" size="xs" variant="light">Project</Button> : null}
-            {issue.url ? <Button component="a" href={issue.url} target="_blank" rel="noopener noreferrer" size="xs">Linear</Button> : null}
+            {prs[0] ? <Button component="a" href={prs[0]} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
+            {issue.project_url ? <Button component="a" href={issue.project_url} leftSection={<IconFolder size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">Project</Button> : null}
+            {issue.url ? <Button component="a" href={issue.url} leftSection={<IconExternalLink size={14} />} target="_blank" rel="noopener noreferrer" size="xs">Linear</Button> : null}
           </Group>
         </Group>
         <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
           <DetailTile label="Project" value={issue.project} href={issue.project_url} />
+          <DetailTile label="Pull request">
+            {prs.length ? (
+              <Stack gap={2}>
+                {prs.map((pr) => (
+                  <ExternalLink href={pr} key={pr}>{prLabel(pr)}</ExternalLink>
+                ))}
+              </Stack>
+            ) : null}
+          </DetailTile>
           <DetailTile label="Changed repos" value={issue.changed_repos ?? legacyChangedRepos(issue)} />
           <DetailTile label="Updated" value={issue.updated_at} />
-          <DetailTile label="Workspace" value={issue.workspace_path} />
         </SimpleGrid>
-        {prs.length ? (
-          <Box>
-            <Text c="dimmed" size="sm">Pull requests</Text>
-            <Stack gap={4} mt={4}>
-              {prs.map((pr) => (
-                <ExternalLink href={pr} key={pr}>{prLabel(pr)}</ExternalLink>
-              ))}
-            </Stack>
-          </Box>
-        ) : null}
         {repos.length ? (
           <Box>
             <Text c="dimmed" size="sm">Repositories</Text>
@@ -439,15 +438,20 @@ function IssueDetails({ issue }: { issue: IssueStatus }) {
   );
 }
 
-function DetailTile({ label, value, href }: { label: string; value?: string; href?: string }) {
+function DetailTile({ label, value, href, children }: {
+  label: string;
+  value?: string;
+  href?: string;
+  children?: React.ReactNode;
+}) {
   return (
     <Paper withBorder p="sm">
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">{label}</Text>
-      {value ? (
+      {children ?? (value ? (
         href ? <ExternalLink href={href}>{value}</ExternalLink> : <Text className="truncate" size="sm">{value}</Text>
       ) : (
         <Text c="dimmed" size="sm">-</Text>
-      )}
+      ))}
     </Paper>
   );
 }
@@ -464,7 +468,7 @@ function PullRequestDetails({ pr }: { pr: PullRequestStatus }) {
             </Group>
             <Text mt={4}>{pr.title || "Untitled pull request"}</Text>
           </Box>
-          {pr.url ? <Button component="a" href={pr.url} target="_blank" rel="noopener noreferrer" size="xs">GitHub</Button> : null}
+          {pr.url ? <Button component="a" href={pr.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">GitHub</Button> : null}
         </Group>
         <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
           <DetailTile label="Issue" value={pr.issue} />
@@ -506,7 +510,6 @@ function StageLogPanel({ log }: { log: StageLog }) {
           </Group>
           <LogMessage message={log.summary?.message} />
           <ChangedFilesTable summary={log.summary} />
-          <RawLogViewer name={log.name} />
         </Stack>
       </Accordion.Panel>
     </Accordion.Item>
@@ -556,58 +559,6 @@ function ChangedFilesTable({ summary }: { summary?: StageLogSummary | null }) {
         </Table>
       </Table.ScrollContainer>
     </Box>
-  );
-}
-
-function RawLogViewer({ name }: { name: string }) {
-  const [raw, setRaw] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState("");
-
-  async function loadRaw() {
-    if (raw !== null || loading) {
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch(`/logs/${encodeURIComponent(name)}`, { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      setRaw(await response.text());
-    } catch (exc) {
-      setError(exc instanceof Error ? exc.message : "Unable to load raw log");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Accordion variant="separated" onChange={(value) => {
-      if (value === "raw") {
-        void loadRaw();
-      }
-    }}>
-      <Accordion.Item value="raw">
-        <Accordion.Control>Raw output</Accordion.Control>
-        <Accordion.Panel>
-          <Stack gap="xs">
-            {raw === null && !error ? (
-              <Button loading={loading} onClick={() => void loadRaw()} size="xs" variant="light">
-                Load raw log
-              </Button>
-            ) : null}
-            {error ? <Text c="red" size="sm">{error}</Text> : null}
-            {raw !== null ? (
-              <ScrollArea.Autosize mah={360} type="auto">
-                <pre className="raw-log-viewer">{raw}</pre>
-              </ScrollArea.Autosize>
-            ) : null}
-          </Stack>
-        </Accordion.Panel>
-      </Accordion.Item>
-    </Accordion>
   );
 }
 
