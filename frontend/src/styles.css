@@ -1,0 +1,136 @@
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: var(--mantine-color-body);
+}
+
+.workspace-grid {
+  align-items: start;
+  display: grid;
+  gap: var(--mantine-spacing-md);
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 34vw);
+}
+
+.side-panel {
+  min-width: 0;
+  position: sticky;
+  top: var(--mantine-spacing-sm);
+}
+
+.orchestration-log {
+  background: transparent;
+  color: var(--mantine-color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  height: calc(100vh - 282px);
+  min-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.summary-row {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  display: block;
+  padding: 9px var(--mantine-spacing-sm);
+  text-align: left;
+  width: 100%;
+}
+
+.summary-row:last-child {
+  border-bottom: 0;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-text {
+  max-width: 220px;
+}
+
+.formatted-log-message,
+.raw-log-viewer {
+  background: var(--mantine-color-dark-8);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  overflow: auto;
+  padding: var(--mantine-spacing-sm);
+  white-space: pre-wrap;
+}
+
+.formatted-log-message {
+  font-size: 14px;
+  font-family: var(--mantine-font-family);
+  line-height: 1.6;
+  white-space: normal;
+}
+
+.formatted-log-message > :first-child {
+  margin-top: 0;
+}
+
+.formatted-log-message > :last-child {
+  margin-bottom: 0;
+}
+
+.formatted-log-message p,
+.formatted-log-message ul,
+.formatted-log-message ol,
+.formatted-log-message pre {
+  margin: 0 0 var(--mantine-spacing-sm);
+}
+
+.formatted-log-message code {
+  background: var(--mantine-color-default);
+  border-radius: var(--mantine-radius-xs);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+  padding: 1px 4px;
+}
+
+.formatted-log-message pre {
+  overflow: auto;
+  padding: var(--mantine-spacing-sm);
+}
+
+.formatted-log-message pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.raw-log-viewer {
+  min-height: 180px;
+}
+
+@media (max-width: 1150px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .side-panel {
+    position: static;
+  }
+
+  .orchestration-log {
+    height: 58vh;
+  }
+}
+
+@media (max-width: 680px) {
+  .summary-row [class*="mantine-Group-root"] {
+    align-items: flex-start;
+  }
+}

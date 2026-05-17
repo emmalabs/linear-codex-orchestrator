@@ -6,6 +6,7 @@ import os
 
 from .config import Settings
 from .orchestrator import Orchestrator
+from .web_server import start_log_server
 
 try:
     from dotenv import load_dotenv
@@ -28,19 +29,34 @@ except ImportError:
 async def async_main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["once", "daemon"], nargs="?", default="once")
-    parser.add_argument("--interval-seconds", type=int, default=900)
+    parser.add_argument(
+        "mode",
+        choices=["once", "daemon", "pr-comments-once", "pr-comments-daemon"],
+        nargs="?",
+        default="once",
+    )
+    parser.add_argument("--interval-seconds", type=int, default=60)
     args = parser.parse_args()
 
     settings = Settings.from_env()
     orchestrator = Orchestrator(settings)
+    log_server = start_log_server() if args.mode == "daemon" else None
     try:
         if args.mode == "daemon":
             await orchestrator.run_forever(args.interval_seconds)
+        elif args.mode == "pr-comments-daemon":
+            while True:
+                await orchestrator.run_pr_feedback_once()
+                await asyncio.sleep(args.interval_seconds)
+        elif args.mode == "pr-comments-once":
+            await orchestrator.run_pr_feedback_once()
         else:
             await orchestrator.run_once()
     finally:
         await orchestrator.close()
+        if log_server:
+            log_server.shutdown()
+            log_server.server_close()
 
 
 def main() -> None:
