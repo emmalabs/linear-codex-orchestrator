@@ -90,6 +90,11 @@ body {
   color: var(--mantine-color-dimmed);
 }
 
+.log-line-idle {
+  border-left-color: var(--mantine-color-yellow-6);
+  color: var(--mantine-color-yellow-3);
+}
+
 .log-line-active {
   border-left-color: var(--mantine-color-blue-5);
   color: var(--mantine-color-blue-2);

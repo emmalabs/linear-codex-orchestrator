@@ -322,6 +322,9 @@ function logLineKind(line: string) {
   if (/started|processing|resuming|implementation|optimization|review|fixing|creating|pushing|committing/i.test(line)) {
     return "log-line-active";
   }
+  if (/Tick complete|sleeping/i.test(line)) {
+    return "log-line-idle";
+  }
   if (/checking open PRs|Polling Linear|found \d+ .*issue|found \d+ open PR|no new PR feedback|sleeping/i.test(line)) {
     return "log-line-muted";
   }
