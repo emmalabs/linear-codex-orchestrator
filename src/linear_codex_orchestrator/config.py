@@ -38,6 +38,7 @@ class Settings:
     codex_fast_mode: bool = False
     codex_sandbox: str = "workspace-write"
     pr_feedback_branch_prefix: str = "codex/"
+    linear_api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -76,6 +77,7 @@ class Settings:
             codex_fast_mode=os.getenv("CODEX_FAST_MODE", "false").lower() in {"1", "true", "yes"},
             codex_sandbox=os.getenv("CODEX_SANDBOX", "workspace-write"),
             pr_feedback_branch_prefix=os.getenv("PR_FEEDBACK_BRANCH_PREFIX", "codex/"),
+            linear_api_key=os.getenv("LINEAR_API_KEY") or None,
         )
 
 

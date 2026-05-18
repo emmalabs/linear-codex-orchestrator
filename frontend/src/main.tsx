@@ -66,8 +66,10 @@ type StageLog = {
 };
 
 type StageLogSummary = {
+  status?: string;
   headline?: string;
   message?: string;
+  last_line?: string;
   tokens_used?: number | null;
   file_count?: number;
   files?: Array<{
@@ -114,7 +116,7 @@ const emptyData: DashboardData = {
 function App() {
   const [data, setData] = React.useState<DashboardData>(emptyData);
   const [selectedDetail, setSelectedDetail] = React.useState<SelectedDetail | null>(null);
-  const orchestrationRef = React.useRef<HTMLPreElement | null>(null);
+  const orchestrationRef = React.useRef<HTMLDivElement | null>(null);
   const shouldFollowRef = React.useRef(true);
 
   React.useEffect(() => {
@@ -182,7 +184,7 @@ function App() {
         </AppShell.Header>
 
         <AppShell.Main>
-          <Stack gap="md">
+          <Stack className="dashboard-stack" gap="md">
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 5 }} spacing="sm">
               <MetricCard label="Current step" value={currentStep(data.orchestration).label} detail={currentStep(data.orchestration).detail} />
               <MetricCard label="Linear issues" value={data.issues.length} detail={latestStatus(data.issues)} />
@@ -197,13 +199,13 @@ function App() {
 
             <Box className="workspace-grid">
               <Stack gap="md" miw={0}>
-                <Paper withBorder>
-                  <Tabs defaultValue="orchestration">
+                <Paper withBorder className="orchestration-panel">
+                  <Tabs className="fill-tabs" defaultValue="orchestration">
                     <Tabs.List>
                       <Tabs.Tab value="orchestration">Orchestration</Tabs.Tab>
                     </Tabs.List>
-                    <Tabs.Panel value="orchestration" p="md">
-                      <pre
+                    <Tabs.Panel className="fill-tabs-panel" value="orchestration" p="md">
+                      <div
                         ref={orchestrationRef}
                         className="orchestration-log"
                         onScroll={(event) => {
@@ -212,8 +214,8 @@ function App() {
                           shouldFollowRef.current = distanceFromBottom < 24;
                         }}
                       >
-                        {data.orchestration || "No orchestration log yet."}
-                      </pre>
+                        <OrchestrationLog text={data.orchestration} />
+                      </div>
                     </Tabs.Panel>
                   </Tabs>
                 </Paper>
@@ -226,7 +228,7 @@ function App() {
                     <Tabs.Tab value="prs">Pull Requests</Tabs.Tab>
                   </Tabs.List>
                   <Tabs.Panel value="issues">
-                    <ScrollArea.Autosize mah="calc(100vh - 190px)" type="auto">
+                    <ScrollArea.Autosize className="side-panel-scroll" type="auto">
                       <SummaryList emptyText="No issue status yet.">
                         {data.issues.map((issue) => (
                           <IssueItem
@@ -239,7 +241,7 @@ function App() {
                     </ScrollArea.Autosize>
                   </Tabs.Panel>
                   <Tabs.Panel value="prs">
-                    <ScrollArea.Autosize mah="calc(100vh - 190px)" type="auto">
+                    <ScrollArea.Autosize className="side-panel-scroll" type="auto">
                       <SummaryList emptyText="No PR status yet.">
                         {data.prs.map((pr) => (
                           <PullRequestItem
@@ -254,6 +256,7 @@ function App() {
                 </Tabs>
               </Paper>
             </Box>
+            <LiveActivityPanel tasks={data.tasks} />
           </Stack>
         </AppShell.Main>
       </AppShell>
@@ -274,6 +277,55 @@ function MetricCard(props: { label: string; value: string | number; detail: stri
       <Text c="dimmed" className="truncate" size="sm">{props.detail}</Text>
     </Card>
   );
+}
+
+function OrchestrationLog({ text }: { text: string }) {
+  if (!text) {
+    return <div className="log-line log-line-muted">No orchestration log yet.</div>;
+  }
+  return (
+    <>
+      {text.split("\n").map((line, index) => (
+        <LogLine key={`${index}-${line}`} line={line} />
+      ))}
+    </>
+  );
+}
+
+function LogLine({ line }: { line: string }) {
+  if (!line) {
+    return <div className="log-line">&nbsp;</div>;
+  }
+  if (line.startsWith("=====")) {
+    return <div className="log-line log-line-session">{line}</div>;
+  }
+  const match = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+  const kind = logLineKind(line);
+  if (!match) {
+    return <div className={`log-line ${kind}`}>{line}</div>;
+  }
+  return (
+    <div className={`log-line ${kind}`}>
+      <span className="log-time">[{match[1]}]</span>{" "}
+      <span>{match[2]}</span>
+    </div>
+  );
+}
+
+function logLineKind(line: string) {
+  if (/failed|blocked|error|unauthorized|auth required/i.test(line)) {
+    return "log-line-error";
+  }
+  if (/found [1-9]\d* new feedback|feedback addressed|PR ready|review passed|completed|complete$/i.test(line)) {
+    return "log-line-success";
+  }
+  if (/started|processing|resuming|implementation|optimization|review|fixing|creating|pushing|committing/i.test(line)) {
+    return "log-line-active";
+  }
+  if (/checking open PRs|Polling Linear|found \d+ .*issue|found \d+ open PR|no new PR feedback|sleeping/i.test(line)) {
+    return "log-line-muted";
+  }
+  return "";
 }
 
 function SummaryList(props: { emptyText: string; children: React.ReactNode }) {
@@ -328,6 +380,34 @@ function PullRequestItem({ pr, onOpen }: { pr: PullRequestStatus; onOpen: () => 
 
 function StatusPill({ status }: { status?: string }) {
   return <Badge color="gray" radius="xl" size="sm" variant="outline">{status || "Unknown"}</Badge>;
+}
+
+function LiveActivityPanel({ tasks }: { tasks: TaskLog[] }) {
+  const activity = currentLiveActivity(tasks);
+  return (
+    <Paper withBorder px="sm" py={6} className="live-activity-panel">
+      <Group align="center" justify="space-between" gap="md" wrap="nowrap">
+        <Box miw={0}>
+          <Group gap="xs">
+            <Badge color={activity ? "green" : "gray"} variant="light">
+              {activity ? "Running" : "Idle"}
+            </Badge>
+            <Text fw={700} size="sm">{activity?.task.title ?? "No active task"}</Text>
+            {activity ? <Text c="dimmed" size="sm">{stageName(activity.stage.name)}</Text> : null}
+          </Group>
+          <Text c="dimmed" className="truncate live-activity-line" size="xs">
+            {activity?.stage.summary?.last_line || "Waiting for the next Codex stage."}
+          </Text>
+        </Box>
+        {activity ? (
+          <Stack align="flex-end" gap={0} miw={96}>
+            <Text c="dimmed" size="xs">{formatBytes(activity.stage.size)}</Text>
+            <Text c="dimmed" size="xs">{new Date(activity.stage.modified * 1000).toLocaleTimeString()}</Text>
+          </Stack>
+        ) : null}
+      </Group>
+    </Paper>
+  );
 }
 
 function TaskDetails({ task }: { task: TaskLog }) {
@@ -495,6 +575,12 @@ function StageLogPanel({ log }: { log: StageLog }) {
             <Text c="dimmed" className="truncate" size="xs">
               {log.summary?.headline || "No processed summary."}
             </Text>
+            {log.summary?.last_line ? (
+              <Text className="truncate" size="xs">
+                {log.summary.status === "running" ? "Live: " : "Last: "}
+                {log.summary.last_line}
+              </Text>
+            ) : null}
           </Box>
           <Stack align="flex-end" gap={0} miw={92}>
             <Text c="dimmed" size="xs">{formatCount(log.summary?.tokens_used)} tokens</Text>
@@ -592,6 +678,14 @@ function latestTask(tasks: TaskLog[]) {
     return "No task logs yet";
   }
   return `${tasks[0].title} - ${tasks[0].log_count} log(s)`;
+}
+
+function currentLiveActivity(tasks: TaskLog[]) {
+  const running = tasks
+    .flatMap((task) => task.stages.map((stage) => ({ task, stage })))
+    .filter((item) => item.stage.summary?.status === "running")
+    .sort((a, b) => b.stage.modified - a.stage.modified);
+  return running[0] ?? null;
 }
 
 function formatBytes(size: number) {

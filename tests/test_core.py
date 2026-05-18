@@ -7,13 +7,19 @@ import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
-from linear_codex_orchestrator.codex_cli import build_codex_command, parse_json_object
+from linear_codex_orchestrator.codex_cli import _run_process_hidden, build_codex_command, parse_json_object
 from linear_codex_orchestrator.config import Settings
 from linear_codex_orchestrator.config import RepoConfig, WorkspaceConfig, validate_workspace_map
 from linear_codex_orchestrator.git_ops import branch_name, has_commits_since_base, run_git
 from linear_codex_orchestrator.local_github_client import pull_request_number_from_url
+from linear_codex_orchestrator.linear_api_client import (
+    LinearApiClient,
+    issue_from_node,
+    issue_matches_labels,
+    render_issue_context,
+)
 from linear_codex_orchestrator.local_linear_client import LocalLinearClient, is_transient_linear_error
-from linear_codex_orchestrator.log_summary import summarize_codex_log, tokens_used, write_log_summary
+from linear_codex_orchestrator.log_summary import last_interesting_line, summarize_codex_log, tokens_used, write_log_summary
 from linear_codex_orchestrator.orchestrator import (
     Orchestrator,
     codex_log_path,
@@ -84,12 +90,14 @@ class CoreTests(unittest.TestCase):
                 '{"web":{"github":"acme/web","path":"/tmp/web","base":"develop"}}}}'
             ),
             "DRY_RUN": "false",
+            "LINEAR_API_KEY": "lin_api_test",
         }
         with patch.dict(os.environ, env, clear=True):
             with patch("linear_codex_orchestrator.config.validate_workspace_map"):
                 settings = Settings.from_env()
         self.assertFalse(settings.dry_run)
         self.assertFalse(settings.codex_fast_mode)
+        self.assertEqual(settings.linear_api_key, "lin_api_test")
         self.assertEqual(settings.pr_feedback_branch_prefix, "codex/")
         self.assertEqual(settings.workspace_map["ENG"].path, Path("/tmp/workspace"))
         self.assertEqual(settings.workspace_map["ENG"].repos["web"].github, "acme/web")
@@ -108,6 +116,53 @@ class CoreTests(unittest.TestCase):
             with patch("linear_codex_orchestrator.config.validate_workspace_map"):
                 settings = Settings.from_env()
         self.assertEqual(settings.workspace_map["EMMA"].repos["api"].github, "emmalabs/emma.db-api")
+
+    def test_orchestrator_uses_linear_api_when_key_is_configured(self) -> None:
+        settings = Settings(workspace_map={}, linear_api_key="lin_api_test")
+        orchestrator = Orchestrator(settings, github=object())
+        self.assertIsInstance(orchestrator.linear, LinearApiClient)
+
+    def test_linear_api_filters_labels_client_side(self) -> None:
+        node = {
+            "labels": {"nodes": [{"name": "agent-ready"}, {"name": "Core"}]},
+        }
+        self.assertTrue(issue_matches_labels(node, "agent-ready", ("agent-blocked",)))
+        self.assertFalse(issue_matches_labels(node, "missing", ()))
+        self.assertFalse(issue_matches_labels(node, None, ("Core",)))
+
+    def test_linear_api_issue_parsing_and_context_rendering(self) -> None:
+        node = {
+            "id": "abc",
+            "identifier": "ENG-1",
+            "title": "Ship",
+            "description": "Do it",
+            "url": "https://linear.app/acme/issue/ENG-1",
+            "team": {"key": "ENG", "name": "Engineering"},
+            "state": {"name": "Todo"},
+            "labels": {"nodes": [{"name": "Core"}]},
+            "project": {"name": "Project X", "url": "https://linear.app/acme/project/x"},
+        }
+        issue = issue_from_node(node)
+        self.assertEqual(issue.identifier, "ENG-1")
+        self.assertEqual(issue.project_name, "Project X")
+        context = render_issue_context(
+            {
+                **node,
+                "comments": {
+                    "nodes": [
+                        {
+                            "createdAt": "2026-01-01T00:00:00Z",
+                            "body": "Comment body",
+                            "user": {"displayName": "Ada", "name": "ada"},
+                        }
+                    ]
+                },
+                "attachments": {"nodes": [{"title": "Spec", "url": "https://example.com/spec"}]},
+            }
+        )
+        self.assertIn("# ENG-1: Ship", context)
+        self.assertIn("Comment body", context)
+        self.assertIn("Spec: https://example.com/spec", context)
 
     def test_validate_workspace_map_rejects_missing_paths(self) -> None:
         missing = Path("/definitely/missing/workspace")
@@ -347,7 +402,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summary["headline"], "Removed the PR feedback limit.")
         self.assertEqual(summary["tokens_used"], 42250.0)
         self.assertEqual(summary["files"], [{"path": "src/app.py", "added": 1, "removed": 1}])
-        self.assertEqual(summary["summary_version"], 3)
+        self.assertEqual(summary["summary_version"], 5)
+        self.assertEqual(summary["last_line"], "Validation passed.")
+
+    def test_codex_log_summary_marks_partial_logs_as_running(self) -> None:
+        summary = summarize_codex_log(Path(".logs/stage.log"), "OpenAI Codex\nworking\n", "")
+        self.assertEqual(summary["status"], "running")
+        self.assertEqual(summary["headline"], "Running. Waiting for Codex final message.")
+        self.assertEqual(summary["message"], "")
+        self.assertEqual(summary["last_line"], "working")
+
+    def test_codex_log_summary_extracts_last_interesting_line(self) -> None:
+        self.assertEqual(last_interesting_line("\nexec\n\x1b[32mRunning tests\x1b[0m\n"), "Running tests")
 
     def test_codex_log_summary_parses_dot_separated_token_thousands(self) -> None:
         self.assertEqual(tokens_used("\ntokens used\n135.878\nDone."), 135878.0)
@@ -375,6 +441,18 @@ class CoreTests(unittest.TestCase):
             summary_path = Path(tmp) / "stage.summary.json"
             self.assertTrue(summary_path.is_file())
             self.assertIn("Done.", summary_path.read_text(encoding="utf-8"))
+
+    def test_hidden_codex_process_streams_to_log_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "stage.log"
+            output = _run_process_hidden(
+                ["python3", "-c", "import sys, time; print('started'); sys.stdout.flush(); time.sleep(0.1); print('done')"],
+                Path(tmp),
+                5,
+                log_path,
+            )
+            self.assertEqual(output.returncode, 0)
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "started\ndone\n")
 
     def test_web_task_index_groups_stage_logs_by_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

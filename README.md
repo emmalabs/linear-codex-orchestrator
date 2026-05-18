@@ -3,14 +3,15 @@
 Small local service that polls Linear Todo issues and coordinates your existing command-line tools:
 
 1. Codex CLI for planning, implementation, and review.
-2. Linear MCP, through Codex CLI, for polling issues, moving status, labels, and comments.
+2. Linear GraphQL API for fast polling, status, labels, and comments when `LINEAR_API_KEY` is set.
+   If no API key is present, Linear MCP through Codex CLI is used as a fallback.
 3. GitHub CLI for ready-for-review PR creation/update and PR feedback checks.
 
 By default, every Todo issue is eligible. Set `LINEAR_READY_LABEL` if you later want an explicit label gate such as `codex-ready`.
 
 ## Prerequisites
 
-No API keys are required in `.env`. `./scripts/setup.sh` installs missing command-line prerequisites when it can:
+No API keys are required in `.env`; without `LINEAR_API_KEY`, the daemon uses your authenticated Linear MCP. `./scripts/setup.sh` installs missing command-line prerequisites when it can:
 
 - Python 3.9+
 - Node.js/npm for the React dashboard build
@@ -23,6 +24,7 @@ If `codex` is not already installed, setup installs it globally with `npm instal
 - Run `codex --login` if setup reports Codex is not logged in.
 - Run `codex mcp login linear` if `codex mcp list` shows Linear as `Not logged in`.
 - Confirm `codex mcp list` shows Linear enabled and authenticated.
+- For faster Linear polling and comments, set `LINEAR_API_KEY` to a Linear personal API key.
 - Run `gh auth login` if setup reports GitHub CLI is not authenticated.
 - Confirm `gh` has access to `emmalabs`.
 - Leave `CODEX_MODEL` empty unless you know a specific model works with your Codex account.

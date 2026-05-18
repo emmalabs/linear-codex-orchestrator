@@ -99,12 +99,13 @@ def run_codex(
                 output_schema_path=Path(schema_file.name) if schema_file else None,
                 bypass_approvals=bypass_approvals,
             )
-            output = _run_process(command, cwd, timeout_seconds, show_output)
+            if log_output_path:
+                log_output_path.parent.mkdir(parents=True, exist_ok=True)
+                log_output_path.write_text("", encoding="utf-8")
+            output = _run_process(command, cwd, timeout_seconds, show_output, log_output_path)
             output_file.seek(0)
             last_message = output_file.read().strip()
             if log_output_path:
-                log_output_path.parent.mkdir(parents=True, exist_ok=True)
-                log_output_path.write_text(output.stdout, encoding="utf-8")
                 write_log_summary(log_output_path, output.stdout, last_message)
             if output.returncode != 0:
                 raise RuntimeError(
@@ -165,9 +166,10 @@ def _run_process(
     cwd: Path,
     timeout_seconds: int,
     show_output: bool,
+    log_output_path: Path | None = None,
 ) -> CodexProcessOutput:
     if not show_output:
-        return _run_process_hidden(command, cwd, timeout_seconds)
+        return _run_process_hidden(command, cwd, timeout_seconds, log_output_path)
     master_fd, slave_fd = pty.openpty()
     process = subprocess.Popen(
         command,
@@ -200,6 +202,7 @@ def _run_process(
                     break
                 text = data.decode(errors="replace")
                 chunks.append(text)
+                append_log_chunk(log_output_path, text)
                 print(text, end="", flush=True)
             if process.poll() is not None:
                 while True:
@@ -214,6 +217,7 @@ def _run_process(
                         break
                     text = data.decode(errors="replace")
                     chunks.append(text)
+                    append_log_chunk(log_output_path, text)
                     print(text, end="", flush=True)
                 break
         return CodexProcessOutput(process.wait(), "".join(chunks))
@@ -221,17 +225,56 @@ def _run_process(
         os.close(master_fd)
 
 
-def _run_process_hidden(command: list[str], cwd: Path, timeout_seconds: int) -> CodexProcessOutput:
-    result = subprocess.run(
+def _run_process_hidden(
+    command: list[str],
+    cwd: Path,
+    timeout_seconds: int,
+    log_output_path: Path | None,
+) -> CodexProcessOutput:
+    process = subprocess.Popen(
         command,
         cwd=cwd,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
-        timeout=timeout_seconds,
     )
-    return CodexProcessOutput(result.returncode, result.stdout)
+    chunks: list[str] = []
+    deadline = time.monotonic() + timeout_seconds
+    assert process.stdout is not None
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                process.kill()
+                process.wait()
+                stdout = "".join(chunks)
+                raise RuntimeError(
+                    f"codex exec timed out after {timeout_seconds}s\n\n{strip_ansi(stdout).strip()}"
+                )
+            readable, _, _ = select.select([process.stdout], [], [], 0.1)
+            if readable:
+                line = process.stdout.readline()
+                if line:
+                    chunks.append(line)
+                    append_log_chunk(log_output_path, line)
+                    continue
+            if process.poll() is not None:
+                remainder = process.stdout.read()
+                if remainder:
+                    chunks.append(remainder)
+                    append_log_chunk(log_output_path, remainder)
+                break
+    finally:
+        process.stdout.close()
+    return CodexProcessOutput(process.wait(), "".join(chunks))
+
+
+def append_log_chunk(log_output_path: Path | None, chunk: str) -> None:
+    if not log_output_path:
+        return
+    with log_output_path.open("a", encoding="utf-8") as handle:
+        handle.write(chunk)
+        handle.flush()
 
 
 def strip_ansi(value: str) -> str:

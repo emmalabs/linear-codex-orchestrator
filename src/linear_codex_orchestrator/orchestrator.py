@@ -21,6 +21,7 @@ from .git_ops import (
 )
 from .local_github_client import LocalGitHubClient
 from .local_linear_client import LocalLinearClient
+from .linear_api_client import LinearApiClient
 from .locks import lock_for_repo
 from .models import LinearIssue, OpenPullRequest, PullRequest, PullRequestFeedback, ReviewResult
 from .prompt_templates import render_prompt
@@ -30,18 +31,25 @@ class Orchestrator:
     def __init__(
         self,
         settings: Settings,
-        linear: LocalLinearClient | None = None,
+        linear: object | None = None,
         github: LocalGitHubClient | None = None,
     ) -> None:
         self.settings = settings
-        self.linear = linear or LocalLinearClient(
-            Path.cwd(),
-            dry_run=settings.dry_run,
-            model=settings.codex_model,
-            reasoning_effort=settings.codex_reasoning_effort,
-            fast_mode=settings.codex_fast_mode,
-        )
+        self.linear = linear or self._linear_client()
         self.github = github or LocalGitHubClient(dry_run=settings.dry_run)
+
+    def _linear_client(self) -> object:
+        if self.settings.linear_api_key:
+            log("Linear backend: direct API")
+            return LinearApiClient(self.settings.linear_api_key, dry_run=self.settings.dry_run)
+        log("Linear backend: Codex MCP fallback")
+        return LocalLinearClient(
+            Path.cwd(),
+            dry_run=self.settings.dry_run,
+            model=self.settings.codex_model,
+            reasoning_effort=self.settings.codex_reasoning_effort,
+            fast_mode=self.settings.codex_fast_mode,
+        )
 
     async def close(self) -> None:
         await self.linear.close()

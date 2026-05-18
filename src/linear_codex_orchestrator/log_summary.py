@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-SUMMARY_VERSION = 3
+SUMMARY_VERSION = 5
 
 
 def summary_path_for(log_path: Path) -> Path:
@@ -41,11 +41,15 @@ def read_or_create_log_summary(log_path: Path) -> dict[str, Any]:
 def summarize_codex_log(log_path: Path, raw: str, last_message: str) -> dict[str, Any]:
     final_message = last_message.strip() or extract_last_message(raw)
     files = changed_files_from_raw(raw)
+    token_count = tokens_used(raw)
+    is_running = token_count is None
     return {
         "summary_version": SUMMARY_VERSION,
-        "headline": headline_from_message(final_message),
-        "message": final_message,
-        "tokens_used": tokens_used(raw),
+        "status": "running" if is_running else "complete",
+        "headline": "Running. Waiting for Codex final message." if is_running else headline_from_message(final_message),
+        "message": "" if is_running else final_message,
+        "last_line": last_interesting_line(raw),
+        "tokens_used": token_count,
         "files": files,
         "file_count": len(files),
         "raw_size": len(raw.encode("utf-8")),
@@ -54,7 +58,7 @@ def summarize_codex_log(log_path: Path, raw: str, last_message: str) -> dict[str
 
 
 def extract_last_message(raw: str) -> str:
-    match = re.search(r"\ntokens used\s*\n[0-9.]+\s*\n(?P<message>.*)\Z", raw, re.DOTALL)
+    match = re.search(r"(?:^|\n)tokens used\s*\n[0-9.]+\s*\n(?P<message>.*)\Z", raw, re.DOTALL)
     if match:
         return match.group("message").strip()
     codex_blocks = [block.strip() for block in re.split(r"\ncodex\s*\n", raw) if block.strip()]
@@ -73,7 +77,7 @@ def headline_from_message(message: str) -> str:
 
 
 def tokens_used(raw: str) -> float | None:
-    matches = re.findall(r"\ntokens used\s*\n([0-9.]+)", raw)
+    matches = re.findall(r"(?:^|\n)tokens used\s*\n([0-9.]+)", raw)
     if not matches:
         return None
     return parse_token_count(matches[-1])
@@ -89,6 +93,17 @@ def parse_token_count(value: str) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def last_interesting_line(raw: str) -> str:
+    for line in reversed(raw.splitlines()):
+        stripped = strip_ansi(line).strip()
+        if not stripped:
+            continue
+        if stripped in {"codex", "exec"}:
+            continue
+        return truncate(stripped, 240)
+    return ""
 
 
 def changed_files_from_raw(raw: str) -> list[dict[str, Any]]:
@@ -129,3 +144,7 @@ def truncate(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
+
+
+def strip_ansi(value: str) -> str:
+    return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
