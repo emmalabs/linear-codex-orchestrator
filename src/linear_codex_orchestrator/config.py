@@ -31,7 +31,7 @@ class Settings:
     in_review_status: str = "In Review"
     max_issues_per_tick: int = 1
     lock_dir: Path = Path(".locks")
-    dry_run: bool = True
+    dry_run: bool = False
     test_command: str | None = None
     codex_model: str | None = None
     codex_reasoning_effort: str | None = None
@@ -70,7 +70,7 @@ class Settings:
             in_review_status=os.getenv("LINEAR_IN_REVIEW_STATUS", "In Review"),
             max_issues_per_tick=int(os.getenv("MAX_ISSUES_PER_TICK", "1")),
             lock_dir=Path(os.getenv("LOCK_DIR", ".locks")),
-            dry_run=os.getenv("DRY_RUN", "true").lower() in {"1", "true", "yes"},
+            dry_run=os.getenv("DRY_RUN", "false").lower() in {"1", "true", "yes"},
             test_command=os.getenv("TEST_COMMAND") or None,
             codex_model=os.getenv("CODEX_MODEL") or None,
             codex_reasoning_effort=os.getenv("CODEX_REASONING_EFFORT") or None,

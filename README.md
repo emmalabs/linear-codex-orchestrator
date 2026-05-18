@@ -41,16 +41,16 @@ cd linear-codex-orchestrator
 ./scripts/setup.sh
 ```
 
-Check `.env`, then run one polling tick:
+Check `.env`, then start the daemon:
 
 ```bash
-DRY_RUN=true ./scripts/run.sh once
+./scripts/run.sh
 ```
 
-Run continuously with a 1-minute interval:
+The example `.env` runs for real with `DRY_RUN=false`, so the daemon can update Linear, push branches, and open pull requests. To test configuration without mutations, temporarily run:
 
 ```bash
-DRY_RUN=false ./scripts/run.sh
+DRY_RUN=true ./scripts/run.sh
 ```
 
 Daemon mode also starts the React dashboard at `http://127.0.0.1:8765` so you can follow orchestration logs, issue/PR status, and inspect detailed Codex stage logs. `./scripts/setup.sh` builds the dashboard, and `./scripts/run.sh` builds it automatically if `frontend/dist/` is missing.
@@ -130,7 +130,7 @@ The Vite dev server proxies API calls to the daemon on `127.0.0.1:8765`.
 - Each issue gets the same branch name in every candidate repo: `codex/<ISSUE-ID>-<slug>`.
 - The service never pushes to `main`.
 - The reviewer runs Codex in read-only sandbox mode.
-- `DRY_RUN=true` avoids mutating GitHub/Linear and skips pushing.
+- `DRY_RUN=false` is the default. Set `DRY_RUN=true` only when you want to verify configuration without mutating GitHub/Linear or pushing branches.
 - Human merge approval remains outside this service.
 
 ## Contributing

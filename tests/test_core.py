@@ -104,6 +104,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(settings.workspace_map["ENG"].repos["web"].path, Path("/tmp/web"))
         self.assertEqual(settings.workspace_map["ENG"].repos["web"].base, "develop")
 
+    def test_settings_from_env_defaults_to_real_run(self) -> None:
+        env = {
+            "WORKSPACE_MAP_JSON": (
+                '{"ENG":{"path":"/tmp/workspace","repos":'
+                '{"web":{"github":"acme/web","path":"/tmp/web"}}}}'
+            ),
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch("linear_codex_orchestrator.config.validate_workspace_map"):
+                settings = Settings.from_env()
+        self.assertFalse(settings.dry_run)
+
     def test_settings_from_env_parses_example_workspace(self) -> None:
         env = {
             "WORKSPACE_MAP_JSON": (
