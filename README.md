@@ -36,6 +36,19 @@ If a daemon run is interrupted after an issue was moved to the in-progress state
 
 PR feedback handling is separate from the issue implementation flow. For each open matching PR, the orchestrator records which GitHub issue comments, review comments, and reviews it has already processed. New feedback checks out the PR branch, runs Codex with the feedback-focused prompt, commits and pushes any fixes, and comments back on the PR with the result.
 
+## Recommended Human Workflow
+
+It is good practice to enable GitHub reviews on orchestrator PRs. The orchestrator checks open PRs for new GitHub review comments, issue comments, and submitted reviews, then uses Codex to address that feedback and push follow-up fixes.
+
+A typical human workflow is:
+
+1. Create the Linear issue in the backlog.
+2. Use Codex plan mode manually to create an implementation plan, then add that plan as a Linear comment.
+3. Move the Linear issue to Todo when it is ready for automation.
+4. Wait for the orchestrator to finish the implementation work and open or update the PR.
+5. Wait some time for Codex review feedback and for the orchestrator to process any fixable feedback.
+6. Check the PR manually before merging.
+
 ## Prerequisites
 
 No API keys are required in `.env`; without `LINEAR_API_KEY`, the daemon uses your authenticated Linear MCP. `./scripts/setup.sh` installs missing command-line prerequisites when it can:
