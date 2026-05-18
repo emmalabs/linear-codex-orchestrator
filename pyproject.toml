@@ -1,8 +1,9 @@
 [project]
-name = "emma-linear-codex-orchestrator"
+name = "linear-codex-orchestrator"
 version = "0.1.0"
 description = "Poll Linear issues and orchestrate local Codex implementation workflows."
 requires-python = ">=3.9"
+license = "MIT"
 dependencies = [
   "python-dotenv>=1.0.1",
 ]
@@ -15,7 +16,7 @@ dev = [
 ]
 
 [project.scripts]
-emma-linear-codex-orchestrator = "linear_codex_orchestrator.main:main"
+linear-codex-orchestrator = "linear_codex_orchestrator.main:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

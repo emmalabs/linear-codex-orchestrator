@@ -1,7 +1,8 @@
 {
-  "name": "emma-linear-codex-orchestrator-dashboard",
+  "name": "linear-codex-orchestrator-dashboard",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",

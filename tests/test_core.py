@@ -104,18 +104,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(settings.workspace_map["ENG"].repos["web"].path, Path("/tmp/web"))
         self.assertEqual(settings.workspace_map["ENG"].repos["web"].base, "develop")
 
-    def test_settings_from_env_parses_emma_workspace(self) -> None:
+    def test_settings_from_env_parses_example_workspace(self) -> None:
         env = {
             "WORKSPACE_MAP_JSON": (
-                '{"EMMA":{"path":"/home/aleix/Projects/emma.db","repos":'
-                '{"api":{"github":"emmalabs/emma.db-api",'
-                '"path":"/home/aleix/Projects/emma.db/emma-api","base":"develop"}}}}'
+                '{"ENG":{"path":"/home/alex/Projects/product","repos":'
+                '{"api":{"github":"example/product-api",'
+                '"path":"/home/alex/Projects/product/api","base":"develop"}}}}'
             ),
         }
         with patch.dict(os.environ, env, clear=True):
             with patch("linear_codex_orchestrator.config.validate_workspace_map"):
                 settings = Settings.from_env()
-        self.assertEqual(settings.workspace_map["EMMA"].repos["api"].github, "emmalabs/emma.db-api")
+        self.assertEqual(settings.workspace_map["ENG"].repos["api"].github, "example/product-api")
 
     def test_orchestrator_uses_linear_api_when_key_is_configured(self) -> None:
         settings = Settings(workspace_map={}, linear_api_key="lin_api_test")
@@ -211,13 +211,13 @@ class CoreTests(unittest.TestCase):
     def test_render_prompt_loads_markdown_template(self) -> None:
         prompt = render_prompt("implementation.md", **{
             "workspace_path": "/tmp/workspace",
-            "issue_identifier": "EMMA-1",
+            "issue_identifier": "ENG-1",
             "issue_title": "Test issue",
-            "issue_url": "https://linear.app/example/issue/EMMA-1",
+            "issue_url": "https://linear.app/example/issue/ENG-1",
             "issue_context": "Linear says add `SLM.screen.123` exactly.",
             "plan": "Do the smallest useful thing.",
         })
-        self.assertIn("EMMA-1", prompt)
+        self.assertIn("ENG-1", prompt)
         self.assertIn("/tmp/workspace", prompt)
         self.assertIn("Inspect the relevant repository code before editing", prompt)
         self.assertIn("Do not move or comment on Linear issues", prompt)
@@ -235,9 +235,9 @@ class CoreTests(unittest.TestCase):
     def test_review_fix_prompt_loads_markdown_template(self) -> None:
         prompt = render_prompt("review_fix.md", **{
             "workspace_path": "/tmp/workspace",
-            "issue_identifier": "EMMA-1",
+            "issue_identifier": "ENG-1",
             "issue_title": "Test issue",
-            "issue_url": "https://linear.app/example/issue/EMMA-1",
+            "issue_url": "https://linear.app/example/issue/ENG-1",
             "issue_context": "Linear says add `SLM.screen.123` exactly.",
             "plan": "Do the smallest useful thing.",
             "changed_repos": "- api: /tmp/api",
@@ -251,9 +251,9 @@ class CoreTests(unittest.TestCase):
     def test_optimizer_prompt_loads_markdown_template(self) -> None:
         prompt = render_prompt("optimizer.md", **{
             "workspace_path": "/tmp/workspace",
-            "issue_identifier": "EMMA-1",
+            "issue_identifier": "ENG-1",
             "issue_title": "Test issue",
-            "issue_url": "https://linear.app/example/issue/EMMA-1",
+            "issue_url": "https://linear.app/example/issue/ENG-1",
             "issue_context": "Linear says add `SLM.screen.123` exactly.",
             "plan": "Do the smallest useful thing.",
             "changed_repos": "- api: /tmp/api",
@@ -305,9 +305,9 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(read_processed_feedback(path), {"a", "b"})
 
     def test_codex_log_path_is_stable_and_sanitized(self) -> None:
-        path = codex_log_path("EMMA/20", "review fix")
+        path = codex_log_path("ENG/20", "review fix")
         self.assertEqual(path.parent, Path(".logs"))
-        self.assertRegex(path.name, r"^\d{8}-\d{6}-emma-20-review-fix\.log$")
+        self.assertRegex(path.name, r"^\d{8}-\d{6}-eng-20-review-fix\.log$")
 
     def test_session_start_marker_is_appended_to_orchestration_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -421,12 +421,12 @@ class CoreTests(unittest.TestCase):
 
     def test_codex_log_summary_deduplicates_repo_prefixed_file_paths(self) -> None:
         raw = (
-            "diff --git a/emma.db-app/src/app.ts b/emma.db-app/src/app.ts\n"
+            "diff --git a/product-web/src/app.ts b/product-web/src/app.ts\n"
             "+repo added\n"
             "-repo removed\n"
             "diff --git a/src/app.ts b/src/app.ts\n"
             "+plain added\n"
-            "See [file](/tmp/workspace/emma.db-app/src/app.ts:1)\n"
+            "See [file](/tmp/workspace/product-web/src/app.ts:1)\n"
             "tokens used\n1\nDone."
         )
         summary = summarize_codex_log(Path(".logs/stage.log"), raw, "")
@@ -458,18 +458,18 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
-                (tmp_path / "20260517-090000-emma-75-planner.log").write_text("tokens used\n1\nPlanned.", encoding="utf-8")
-                (tmp_path / "20260517-091000-emma-75-review.log").write_text("tokens used\n2\nReviewed.", encoding="utf-8")
+                (tmp_path / "20260517-090000-eng-75-planner.log").write_text("tokens used\n1\nPlanned.", encoding="utf-8")
+                (tmp_path / "20260517-091000-eng-75-review.log").write_text("tokens used\n2\nReviewed.", encoding="utf-8")
                 (tmp_path / "20260517-092000-data-48-pr-feedback.log").write_text("tokens used\n3\nFixed PR.", encoding="utf-8")
                 tasks = task_index()
         self.assertEqual(tasks[0]["key"], "data-48")
         self.assertEqual(tasks[0]["type"], "PR feedback")
-        self.assertEqual(tasks[1]["key"], "emma-75")
+        self.assertEqual(tasks[1]["key"], "eng-75")
         self.assertEqual(tasks[1]["log_count"], 2)
         self.assertEqual(len(tasks[1]["stages"]), 2)
 
     def test_task_from_log_name_extracts_linear_and_pr_feedback_tasks(self) -> None:
-        self.assertEqual(task_from_log_name("20260517-090000-emma-75-review.log")["key"], "emma-75")
+        self.assertEqual(task_from_log_name("20260517-090000-eng-75-review.log")["key"], "eng-75")
         self.assertEqual(task_from_log_name("20260517-092000-data-48-pr-feedback.log")["type"], "PR feedback")
 
     def test_web_log_paths_are_confined_to_log_dir(self) -> None:
@@ -562,8 +562,8 @@ class CoreTests(unittest.TestCase):
         self.assertIn('model_service_tier="priority"', command)
 
     def test_parse_json_object_uses_last_complete_object(self) -> None:
-        raw = 'codex\n{"issues":[]}\nmcp: linear/list_issues completed\ncodex\n{"issues":[{"id":"EMMA-79"}]}'
-        self.assertEqual(parse_json_object(raw), {"issues": [{"id": "EMMA-79"}]})
+        raw = 'codex\n{"issues":[]}\nmcp: linear/list_issues completed\ncodex\n{"issues":[{"id":"ENG-79"}]}'
+        self.assertEqual(parse_json_object(raw), {"issues": [{"id": "ENG-79"}]})
 
     def test_remove_label_treats_absent_label_as_success(self) -> None:
         calls: list[str] = []
@@ -573,7 +573,7 @@ class CoreTests(unittest.TestCase):
             return '{"success":true,"message":"removed"}'
 
         with patch("linear_codex_orchestrator.local_linear_client.run_codex", fake_run_codex):
-            asyncio.run(LocalLinearClient(Path("/tmp/workspace")).remove_label("EMMA-79", "agent-running"))
+            asyncio.run(LocalLinearClient(Path("/tmp/workspace")).remove_label("ENG-79", "agent-running"))
 
         self.assertIn('Remove Linear label exactly "agent-running"', calls[0])
         self.assertIn("If the label is already absent, treat the mutation as successful.", calls[0])
@@ -594,7 +594,7 @@ class CoreTests(unittest.TestCase):
         client.mutation_retry_delays = (0.0,)
         with patch("linear_codex_orchestrator.local_linear_client.run_codex", fake_run_codex):
             with patch("linear_codex_orchestrator.local_linear_client.asyncio.sleep", fake_sleep):
-                asyncio.run(client.comment("EMMA-79", "done"))
+                asyncio.run(client.comment("ENG-79", "done"))
 
         self.assertEqual(len(calls), 2)
 
@@ -609,7 +609,7 @@ class CoreTests(unittest.TestCase):
         client.mutation_retry_delays = (0.0,)
         with patch("linear_codex_orchestrator.local_linear_client.run_codex", fake_run_codex):
             with self.assertRaisesRegex(RuntimeError, "status does not exist"):
-                asyncio.run(client.move_issue("EMMA-79", "Missing"))
+                asyncio.run(client.move_issue("ENG-79", "Missing"))
 
         self.assertEqual(len(calls), 1)
 
@@ -626,9 +626,9 @@ class CoreTests(unittest.TestCase):
             return '{"issues":[]}'
 
         with patch("linear_codex_orchestrator.local_linear_client.run_codex", fake_run_codex):
-            asyncio.run(LocalLinearClient(Path("/tmp/workspace")).ready_issues("Todo", None, 1, team_keys=("EMMA",)))
+            asyncio.run(LocalLinearClient(Path("/tmp/workspace")).ready_issues("Todo", None, 1, team_keys=("ENG",)))
 
-        self.assertIn('team key in "EMMA"', calls[0][0])
+        self.assertIn('team key in "ENG"', calls[0][0])
         self.assertIn("project_name, project_url", calls[0][0])
         self.assertIn("Do not read local files", calls[0][0])
         self.assertFalse(calls[0][1]["show_output"])
@@ -765,7 +765,7 @@ class CoreTests(unittest.TestCase):
     def test_planner_prompt_does_not_block_only_for_unreadable_attachment(self) -> None:
         prompt = render_prompt(
             "planner.md",
-            issue_identifier="EMMA-1",
+            issue_identifier="ENG-1",
             issue_context="Issue asks to add section 123 and file splitting config.",
             full_issue_context="Linear says add `SLM.screen.123` exactly.",
         )
@@ -775,7 +775,7 @@ class CoreTests(unittest.TestCase):
 
     def test_reviewer_prompt_requires_direct_linear_read(self) -> None:
         prompt = render_prompt("reviewer.md", **{
-            "issue_identifier": "EMMA-1",
+            "issue_identifier": "ENG-1",
             "issue_title": "Test issue",
             "issue_context": "Linear says add `SLM.screen.123` exactly.",
             "plan": "Do the smallest useful thing.",

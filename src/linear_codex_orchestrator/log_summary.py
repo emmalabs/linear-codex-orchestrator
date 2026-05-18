@@ -133,10 +133,11 @@ def changed_files_from_raw(raw: str) -> list[dict[str, Any]]:
 
 def normalize_path(path: str) -> str:
     parts = Path(path).parts
-    for marker in ("emma.db-api", "emma.db-app", "emma.db-data", "emma.db-docker"):
+    source_roots = ("src", "docs", "tests", "packages", "apps", "lib", "scripts", "frontend", "backend")
+    for marker in source_roots:
         if marker in parts:
             index = parts.index(marker)
-            return "/".join(parts[index + 1 :])
+            return "/".join(parts[index:])
     return path
 
 

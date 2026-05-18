@@ -218,7 +218,7 @@ def task_from_log_name(name: str) -> dict[str, str]:
             task_key = body[: -len(suffix)]
             break
     task_type = "PR feedback" if stage == "pr-feedback" else "Linear issue"
-    title = task_key.upper() if task_key.startswith("emma-") else task_key
+    title = task_key.upper() if re.match(r"^[a-z]+-\d+$", task_key) else task_key
     return {
         "key": task_key,
         "title": title,

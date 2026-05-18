@@ -1,13 +1,15 @@
-# emma-linear-codex-orchestrator
+# Linear Codex Orchestrator
 
-Small local service that polls Linear Todo issues and coordinates your existing command-line tools:
+Local daemon that polls Linear issues, runs Codex against one or more local repositories, opens ready-for-review pull requests, and monitors PR feedback.
 
 1. Codex CLI for planning, implementation, and review.
 2. Linear GraphQL API for fast polling, status, labels, and comments when `LINEAR_API_KEY` is set.
    If no API key is present, Linear MCP through Codex CLI is used as a fallback.
 3. GitHub CLI for ready-for-review PR creation/update and PR feedback checks.
 
-By default, every Todo issue is eligible. Set `LINEAR_READY_LABEL` if you later want an explicit label gate such as `codex-ready`.
+By default, every Todo issue in a configured Linear team is eligible. Set `LINEAR_READY_LABEL` if you want an explicit label gate such as `codex-ready`.
+
+![Linear Codex Orchestrator dashboard](docs/images/dashboard.png)
 
 ## Prerequisites
 
@@ -26,7 +28,7 @@ If `codex` is not already installed, setup installs it globally with `npm instal
 - Confirm `codex mcp list` shows Linear enabled and authenticated.
 - For faster Linear polling and comments, set `LINEAR_API_KEY` to a Linear personal API key.
 - Run `gh auth login` if setup reports GitHub CLI is not authenticated.
-- Confirm `gh` has access to `emmalabs`.
+- Confirm `gh` has access to the GitHub organizations and repositories configured in `WORKSPACE_MAP_JSON`.
 - Leave `CODEX_MODEL` empty unless you know a specific model works with your Codex account.
 - Set `CODEX_REASONING_EFFORT` to `low`, `medium`, `high`, or `xhigh` for models that support it.
 - Set `CODEX_FAST_MODE=true` to request the Codex Fast service tier for supported models.
@@ -35,7 +37,7 @@ If `codex` is not already installed, setup installs it globally with `npm instal
 ## Quick Start
 
 ```bash
-cd emma-linear-codex-orchestrator
+cd linear-codex-orchestrator
 ./scripts/setup.sh
 ```
 
@@ -66,24 +68,29 @@ Or schedule `./scripts/run.sh once` from cron or systemd on this machine.
 
 ## Required Config
 
-`WORKSPACE_MAP_JSON` maps the single Linear team to the local multi-repo workspace:
+`WORKSPACE_MAP_JSON` maps Linear team keys to local workspaces. Each workspace can contain one or more repositories:
 
 ```json
 {
-  "EMMA": {
-    "path": "/home/aleix/Projects/emma.db",
+  "ENG": {
+    "path": "/home/alex/projects/product",
     "repos": {
-      "api": {
-        "github": "emmalabs/emma.db-api",
-        "path": "/home/aleix/Projects/emma.db/emma-api",
+      "web": {
+        "github": "example/product-web",
+        "path": "/home/alex/projects/product/web",
         "base": "develop"
+      },
+      "api": {
+        "github": "example/product-api",
+        "path": "/home/alex/projects/product/api",
+        "base": "main"
       }
     }
   }
 }
 ```
 
-For the `emma.db` workspace, Codex can change any of the configured repos: `api`, `app`, `data`, and `docker`. No Linear repo labels are required.
+Codex can change any repository listed for the issue's Linear team. No per-repository Linear labels are required.
 
 ## Prompts
 
@@ -125,3 +132,15 @@ The Vite dev server proxies API calls to the daemon on `127.0.0.1:8765`.
 - The reviewer runs Codex in read-only sandbox mode.
 - `DRY_RUN=true` avoids mutating GitHub/Linear and skips pushing.
 - Human merge approval remains outside this service.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local development checks and pull request guidance.
+
+## Security
+
+Please report security issues privately. See [SECURITY.md](SECURITY.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
