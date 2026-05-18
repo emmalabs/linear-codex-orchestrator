@@ -62,6 +62,7 @@ No API keys are required in `.env`; without `LINEAR_API_KEY`, the daemon uses yo
 If `codex` is not already installed, setup installs it globally with `npm install -g @openai/codex`. Authentication is still interactive:
 
 - Run `codex --login` if setup reports Codex is not logged in.
+- Install the Linear MCP server with `codex mcp add linear --url https://mcp.linear.app/mcp`.
 - Run `codex mcp login linear` if `codex mcp list` shows Linear as `Not logged in`.
 - Confirm `codex mcp list` shows Linear enabled and authenticated.
 - For faster Linear polling and comments, set `LINEAR_API_KEY` to a Linear personal API key.

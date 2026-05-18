@@ -108,7 +108,8 @@ check_auth() {
   if mcp_list="$(codex mcp list 2>&1)"; then
     if ! grep -Eq '^linear[[:space:]]' <<<"$mcp_list"; then
       echo "Linear MCP is not configured."
-      echo "Configure it in Codex, then confirm: codex mcp list"
+      echo "Run: codex mcp add linear --url https://mcp.linear.app/mcp"
+      echo "Then confirm: codex mcp list"
       auth_ok=1
     elif grep -Eq '^linear[[:space:]].*Not logged in' <<<"$mcp_list"; then
       echo "Linear MCP is enabled, but not logged in."
@@ -124,7 +125,8 @@ check_auth() {
   else
     echo "Codex is installed, but it is not logged in or MCP is not configured yet."
     echo "Run: codex --login"
-    echo "Then configure Linear MCP and confirm: codex mcp list"
+    echo "Then run: codex mcp add linear --url https://mcp.linear.app/mcp"
+    echo "Then confirm: codex mcp list"
     auth_ok=1
   fi
 
