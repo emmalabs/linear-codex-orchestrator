@@ -11,6 +11,31 @@ By default, every Todo issue in a configured Linear team is eligible. Set `LINEA
 
 ![Linear Codex Orchestrator dashboard](docs/images/dashboard.png)
 
+## Workflow Summary
+
+The orchestrator runs a local control loop that coordinates Linear, Codex, Git, and GitHub from the repositories listed in `WORKSPACE_MAP_JSON`.
+
+On each tick it:
+
+1. Checks open GitHub PRs whose branch starts with `PR_FEEDBACK_BRANCH_PREFIX` (`codex/` by default) and processes any new comments or review feedback.
+2. Looks for resumable Linear issues in the configured in-progress status that still carry the running label.
+3. If nothing is being resumed, polls Linear for eligible Todo issues, optionally filtered by `LINEAR_READY_LABEL`.
+
+For each Linear issue, the orchestrator:
+
+1. Resolves the issue's Linear team key to a configured workspace and acquires a workspace lock so only one issue runs there at a time.
+2. Reads the full Linear issue context through the direct Linear API when `LINEAR_API_KEY` is set, or through the Codex Linear MCP fallback otherwise.
+3. Runs a read-only Codex planning pass. If the planner returns `BLOCKED:`, the issue is labeled with `LINEAR_BLOCKED_LABEL` and no code is changed.
+4. Posts the plan to Linear, moves the issue to `LINEAR_IN_PROGRESS_STATUS`, adds `LINEAR_RUNNING_LABEL`, and creates the same branch in every candidate repo: `codex/<issue-id>-<slug>`.
+5. Runs Codex implementation across the workspace, then detects which configured repositories actually changed.
+6. Runs a Codex optimization pass for changed repositories, followed by a read-only Codex review pass.
+7. If review fails, runs one reviewer-fix pass and reviews again. A failed second review blocks automatic PR creation and leaves a Linear comment.
+8. For passing reviewed changes, commits each changed repository, pushes the branch, creates or updates a ready-for-review GitHub PR, attaches the PR to Linear, moves the Linear issue to `LINEAR_IN_REVIEW_STATUS`, and removes the running label.
+
+If a daemon run is interrupted after an issue was moved to the in-progress state, the next tick first searches for issues with `LINEAR_RUNNING_LABEL`, checks out the existing branch in each configured repo, and resumes from the current working tree instead of starting from the base branch again.
+
+PR feedback handling is separate from the issue implementation flow. For each open matching PR, the orchestrator records which GitHub issue comments, review comments, and reviews it has already processed. New feedback checks out the PR branch, runs Codex with the feedback-focused prompt, commits and pushes any fixes, and comments back on the PR with the result.
+
 ## Prerequisites
 
 No API keys are required in `.env`; without `LINEAR_API_KEY`, the daemon uses your authenticated Linear MCP. `./scripts/setup.sh` installs missing command-line prerequisites when it can:
