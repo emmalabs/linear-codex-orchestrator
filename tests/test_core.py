@@ -47,7 +47,7 @@ from linear_codex_orchestrator.orchestrator import (
     write_processed_feedback,
 )
 from linear_codex_orchestrator.models import OpenPullRequest, PullRequestFeedback, parse_linear_issue
-from linear_codex_orchestrator.locks import lock_for_repo
+from linear_codex_orchestrator.locks import lock_file_is_stale, lock_for_repo
 from linear_codex_orchestrator.prompt_templates import render_prompt
 from linear_codex_orchestrator.web_server import (
     browse_index,
@@ -71,6 +71,29 @@ class CoreTests(unittest.TestCase):
             branch_name("ENG-123", "Fix OAuth callback: spaces & symbols!"),
             "codex/eng-123-fix-oauth-callback-spaces-symbols",
         )
+
+    def test_lock_reclaims_dead_pid_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp)
+            lock_path = lock_dir / "repo.lock"
+            lock_path.write_text("99999999", encoding="utf-8")
+
+            self.assertTrue(lock_file_is_stale(lock_path))
+            with lock_for_repo(lock_dir, "repo") as lock:
+                self.assertTrue(lock.acquired)
+                self.assertEqual(lock_path.read_text(encoding="utf-8"), str(os.getpid()))
+
+            self.assertFalse(lock_path.exists())
+
+    def test_lock_keeps_live_pid_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp)
+            lock_path = lock_dir / "repo.lock"
+            lock_path.write_text(str(os.getpid()), encoding="utf-8")
+
+            self.assertFalse(lock_file_is_stale(lock_path))
+            with lock_for_repo(lock_dir, "repo") as lock:
+                self.assertFalse(lock.acquired)
 
     def test_parse_linear_issue(self) -> None:
         issue = parse_linear_issue(
@@ -875,6 +898,136 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(linear.calls, [("In Progress", "agent-running")])
         self.assertEqual(seen, [("ENG-1", True)])
 
+    def test_run_once_resumes_interrupted_in_progress_issue_with_existing_branch(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Resume me",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+
+        class FakeLinear:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str | None, tuple[str, ...]]] = []
+
+            async def close(self) -> None:
+                return None
+
+            async def ready_issues(
+                self,
+                status: str,
+                label: str | None,
+                _limit: int,
+                exclude_labels: tuple[str, ...] = (),
+                *_args: object,
+            ) -> list[object]:
+                self.calls.append((status, label, exclude_labels))
+                return [issue] if status == "In Progress" and label is None else []
+
+        class FakeGitHub:
+            async def close(self) -> None:
+                return None
+
+            async def list_open_prs(self, *_args: object, **_kwargs: object) -> list[object]:
+                return []
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        orchestrator = Orchestrator(
+            Settings(workspace_map={"ENG": workspace}),
+            linear=FakeLinear(),
+            github=FakeGitHub(),
+        )
+        seen: list[tuple[str, bool]] = []
+
+        async def fake_process(issue_arg: object, resume: bool = False) -> None:
+            seen.append((issue_arg.identifier, resume))
+
+        orchestrator.process_issue = fake_process  # type: ignore[method-assign]
+        with patch.object(orchestrator, "branch_exists_in_all_repos", return_value=True):
+            asyncio.run(orchestrator.run_once())
+
+        self.assertEqual(
+            orchestrator.linear.calls,
+            [
+                ("In Progress", "agent-running", ("agent-blocked",)),
+                ("In Progress", None, ("agent-running", "agent-blocked")),
+            ],
+        )
+        self.assertEqual(seen, [("ENG-1", True)])
+
+    def test_run_once_ignores_in_progress_issue_without_existing_branch(self) -> None:
+        in_progress = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Human work",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        todo = parse_linear_issue(
+            {
+                "id": "def",
+                "identifier": "ENG-2",
+                "title": "Start me",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-2",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+
+        class FakeLinear:
+            async def close(self) -> None:
+                return None
+
+            async def ready_issues(self, status: str, label: str | None, *_args: object) -> list[object]:
+                if status == "In Progress" and label is None:
+                    return [in_progress]
+                if status == "Todo":
+                    return [todo]
+                return []
+
+        class FakeGitHub:
+            async def close(self) -> None:
+                return None
+
+            async def list_open_prs(self, *_args: object, **_kwargs: object) -> list[object]:
+                return []
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        orchestrator = Orchestrator(
+            Settings(workspace_map={"ENG": workspace}),
+            linear=FakeLinear(),
+            github=FakeGitHub(),
+        )
+        seen: list[tuple[str, bool]] = []
+
+        async def fake_process(issue_arg: object, resume: bool = False) -> None:
+            seen.append((issue_arg.identifier, resume))
+
+        orchestrator.process_issue = fake_process  # type: ignore[method-assign]
+        with patch.object(orchestrator, "branch_exists_in_all_repos", return_value=False):
+            asyncio.run(orchestrator.run_once())
+
+        self.assertEqual(seen, [("ENG-2", False)])
+
     def test_resume_checks_out_existing_branch_without_resetting_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_path = Path(tmp)
@@ -884,6 +1037,8 @@ class CoreTests(unittest.TestCase):
             def fake_run_git(path: Path, *args: str) -> str:
                 self.assertEqual(path, repo_path)
                 run_commands.append(args)
+                if args == ("show-ref", "--verify", "--quiet", f"refs/heads/{branch}"):
+                    return ""
                 if args == ("checkout", branch):
                     return ""
                 raise AssertionError(f"unexpected git command: {args}")
@@ -897,7 +1052,38 @@ class CoreTests(unittest.TestCase):
                 with patch("linear_codex_orchestrator.orchestrator.run_git", fake_run_git):
                     orchestrator.checkout_existing_branch(workspace, branch)
 
-        self.assertEqual(run_commands, [("checkout", branch)])
+        self.assertEqual(
+            run_commands,
+            [
+                ("show-ref", "--verify", "--quiet", f"refs/heads/{branch}"),
+                ("checkout", branch),
+            ],
+        )
+
+    def test_resume_reports_checkout_failure_separately_from_missing_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_path = Path(tmp)
+            branch = "codex/eng-1-resume-me"
+
+            def fake_branch_exists(path: Path, branch_arg: str) -> bool:
+                self.assertEqual(path, repo_path)
+                self.assertEqual(branch_arg, branch)
+                return True
+
+            def fake_checkout_branch(path: Path, branch_arg: str) -> bool:
+                self.assertEqual(path, repo_path)
+                self.assertEqual(branch_arg, branch)
+                return False
+
+            workspace = WorkspaceConfig(
+                path=repo_path,
+                repos={"web": RepoConfig("acme/web", repo_path, "develop")},
+            )
+            orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}))
+            with patch("linear_codex_orchestrator.orchestrator.branch_exists", fake_branch_exists):
+                with patch("linear_codex_orchestrator.orchestrator.checkout_branch", fake_checkout_branch):
+                    with self.assertRaisesRegex(RuntimeError, "could not be checked out in: web"):
+                        orchestrator.checkout_existing_branch(workspace, branch)
 
     def test_planner_block_detection_requires_blocked_prefix(self) -> None:
         self.assertTrue(planner_is_blocked("BLOCKED: missing acceptance criteria"))
