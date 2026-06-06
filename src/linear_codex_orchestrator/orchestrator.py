@@ -149,6 +149,7 @@ class Orchestrator:
                     repo.github,
                     branch_prefix=self.settings.pr_feedback_branch_prefix,
                 )
+                await self.archive_merged_prs(repo.github, repo_key)
                 log(f"{repo_key}: found {len(prs)} open PR(s) for feedback check")
                 for pr in prs:
                     try:
@@ -156,6 +157,25 @@ class Orchestrator:
                     except Exception as exc:
                         log(f"{repo.github}#{pr.number}: PR feedback processing failed; daemon will continue: {exc}")
         log("PR feedback check complete")
+
+    async def archive_merged_prs(self, repo: str, repo_key: str) -> None:
+        list_merged_prs = getattr(self.github, "list_merged_prs", None)
+        if not callable(list_merged_prs):
+            return
+        try:
+            merged_prs = await list_merged_prs(
+                repo,
+                branch_prefix=self.settings.pr_feedback_branch_prefix,
+            )
+        except Exception as exc:
+            log(f"{repo_key}: merged PR archive check failed; daemon will continue: {exc}")
+            return
+        archived = 0
+        for pr in merged_prs:
+            if archive_pr_status(pr):
+                archived += 1
+        if archived:
+            log(f"{repo_key}: archived {archived} merged PR status entr{'y' if archived == 1 else 'ies'}")
 
     async def process_pr_feedback(self, repo_key: str, repo: RepoConfig, pr: OpenPullRequest) -> None:
         lock_name = f"pr-feedback:{repo.github}:{pr.number}"
@@ -1169,6 +1189,17 @@ def update_pr_status(
         current["feedback_count"] = feedback_count
     prs[key] = current
     write_status(payload)
+
+
+def archive_pr_status(pr: OpenPullRequest) -> bool:
+    payload = read_status()
+    prs = payload["prs"]
+    assert isinstance(prs, dict)
+    key = f"{pr.repo}#{pr.number}"
+    existed = key in prs
+    prs.pop(key, None)
+    write_status(payload)
+    return existed
 
 
 def workspace_status_context(workspace: WorkspaceConfig) -> dict[str, object]:

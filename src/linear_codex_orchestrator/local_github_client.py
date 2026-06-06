@@ -107,6 +107,41 @@ class LocalGitHubClient:
             if item.get("headRefName", "").startswith(branch_prefix)
         ]
 
+    async def list_merged_prs(
+        self,
+        repo: str,
+        *,
+        branch_prefix: str,
+    ) -> list[OpenPullRequest]:
+        raw = _run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                repo,
+                "--state",
+                "merged",
+                "--limit",
+                "1000",
+                "--json",
+                "number,url,title,headRefName,baseRefName",
+            ]
+        )
+        prs = json.loads(raw)
+        return [
+            OpenPullRequest(
+                repo=repo,
+                number=item["number"],
+                url=item["url"],
+                title=item["title"],
+                head_branch=item["headRefName"],
+                base_branch=item["baseRefName"],
+            )
+            for item in prs
+            if item.get("headRefName", "").startswith(branch_prefix)
+        ]
+
     async def pr_feedback(self, repo: str, number: int) -> list[PullRequestFeedback]:
         return [
             feedback

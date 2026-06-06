@@ -28,6 +28,7 @@ from linear_codex_orchestrator.local_linear_client import LocalLinearClient, is_
 from linear_codex_orchestrator.log_summary import last_interesting_line, summarize_codex_log, tokens_used, write_log_summary
 from linear_codex_orchestrator.orchestrator import (
     Orchestrator,
+    archive_pr_status,
     codex_log_path,
     implementation_comment,
     log_session_start,
@@ -452,6 +453,17 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(status["prs"]["acme/web#12"]["status"], "Ready for review")
         self.assertEqual(status["prs"]["acme/web#12"]["issue"], "ENG-1")
         self.assertEqual(status["prs"]["acme/web#12"]["repo_path"], "/tmp/workspace/web")
+
+    def test_archive_pr_status_removes_pr_from_status_file(self) -> None:
+        pr = OpenPullRequest("acme/web", 12, "https://github.com/acme/web/pull/12", "Fix", "branch", "main")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                update_pr_status(pr, "Ready")
+                self.assertTrue(archive_pr_status(pr))
+                self.assertFalse(archive_pr_status(pr))
+                status = read_status()
+        self.assertEqual(status["prs"], {})
 
     def test_web_log_index_and_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -976,6 +988,44 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(linear.calls, [("In Progress", "agent-running")])
         self.assertEqual(seen, [("ENG-1", True)])
+
+    def test_run_pr_feedback_once_archives_merged_pr_statuses(self) -> None:
+        merged_pr = OpenPullRequest(
+            "acme/web",
+            12,
+            "https://github.com/acme/web/pull/12",
+            "Merged",
+            "codex/eng-1",
+            "develop",
+        )
+
+        class FakeGitHub:
+            async def close(self) -> None:
+                return None
+
+            async def list_open_prs(self, *_args: object, **_kwargs: object) -> list[object]:
+                return []
+
+            async def list_merged_prs(self, *_args: object, **_kwargs: object) -> list[OpenPullRequest]:
+                return [merged_pr]
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        orchestrator = Orchestrator(
+            Settings(workspace_map={"ENG": workspace}),
+            github=FakeGitHub(),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                update_pr_status(merged_pr, "Ready for review")
+                asyncio.run(orchestrator.run_pr_feedback_once())
+                status = read_status()
+
+        self.assertEqual(status["prs"], {})
 
     def test_run_once_resumes_interrupted_in_progress_issue_with_existing_branch(self) -> None:
         issue = parse_linear_issue(
