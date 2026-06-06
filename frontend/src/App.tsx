@@ -45,6 +45,7 @@ export function App() {
   const [selectedDetail, setSelectedDetail] = React.useState<SelectedDetail | null>(null);
   const orchestrationRef = React.useRef<HTMLDivElement | null>(null);
   const shouldFollowRef = React.useRef(true);
+  const detailHistoryRef = React.useRef(false);
 
   const refreshConfig = React.useCallback(async () => {
     const response = await fetch("/api/config", { cache: "no-store" });
@@ -105,6 +106,38 @@ export function App() {
     }
   }, [data.orchestration]);
 
+  React.useEffect(() => {
+    const closeDetailFromHistory = () => {
+      detailHistoryRef.current = false;
+      setSelectedDetail(null);
+    };
+
+    window.addEventListener("popstate", closeDetailFromHistory);
+    return () => window.removeEventListener("popstate", closeDetailFromHistory);
+  }, []);
+
+  const openDetail = React.useCallback((detail: SelectedDetail) => {
+    setSelectedDetail(detail);
+    if (!detailHistoryRef.current) {
+      window.history.pushState({ commandCenterDetail: true }, "", window.location.href);
+      detailHistoryRef.current = true;
+    }
+  }, []);
+
+  const closeDetail = React.useCallback(() => {
+    if (detailHistoryRef.current) {
+      window.history.back();
+      return;
+    }
+    setSelectedDetail(null);
+  }, []);
+
+  const openSection = React.useCallback((section: ActiveSection) => {
+    detailHistoryRef.current = false;
+    setSelectedDetail(null);
+    setActiveTab(section);
+  }, []);
+
   const step = currentStep(data.orchestration);
   const activeTitle = selectedDetail
     ? selectedDetail.kind === "issue"
@@ -155,19 +188,13 @@ export function App() {
                   active={activeTab === "issues"}
                   icon={<IconListDetails size={18} />}
                   label="Issues"
-                  onClick={() => {
-                    setSelectedDetail(null);
-                    setActiveTab("issues");
-                  }}
+                  onClick={() => openSection("issues")}
                 />
                 <NavItem
                   active={activeTab === "prs"}
                   icon={<IconGitPullRequest size={18} />}
                   label="Pull Requests"
-                  onClick={() => {
-                    setSelectedDetail(null);
-                    setActiveTab("prs");
-                  }}
+                  onClick={() => openSection("prs")}
                 />
               </Stack>
             </Stack>
@@ -177,19 +204,13 @@ export function App() {
                 active={activeTab === "workspaces"}
                 icon={<IconBriefcase size={18} />}
                 label="Workspaces"
-                onClick={() => {
-                  setSelectedDetail(null);
-                  setActiveTab("workspaces");
-                }}
+                onClick={() => openSection("workspaces")}
               />
               <NavItem
                 active={activeTab === "settings"}
                 icon={<IconAdjustments size={18} />}
                 label="Settings"
-                onClick={() => {
-                  setSelectedDetail(null);
-                  setActiveTab("settings");
-                }}
+                onClick={() => openSection("settings")}
               />
               <Anchor className="nav-item" href="https://github.com/emmalabs/linear-codex-orchestrator" target="_blank" rel="noopener noreferrer">
                 <Group gap="sm" wrap="nowrap">
@@ -207,7 +228,7 @@ export function App() {
             {selectedDetail ? (
               <DetailPage
                 detail={selectedDetail}
-                onBack={() => setSelectedDetail(null)}
+                onBack={closeDetail}
                 tasks={data.tasks}
               />
             ) : (
@@ -216,7 +237,7 @@ export function App() {
                   <DashboardView
                     data={data}
                     mode={activeTab === "prs" ? "prs" : "issues"}
-                    onSelectDetail={setSelectedDetail}
+                    onSelectDetail={openDetail}
                     orchestrationRef={orchestrationRef}
                     shouldFollowRef={shouldFollowRef}
                   />
