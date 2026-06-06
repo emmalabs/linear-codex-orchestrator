@@ -647,8 +647,6 @@ body {
   min-width: 0;
 }
 
-.detail-title-panel,
-.detail-content-card,
 .detail-empty-state {
   background: color-mix(in srgb, var(--mantine-color-dark-7) 72%, transparent);
   border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 42%, transparent);
@@ -657,14 +655,10 @@ body {
 
 .detail-title-panel {
   background: transparent;
+  border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 58%, transparent);
   border-radius: 0;
   padding-inline: 0 !important;
-}
-
-.detail-content-card {
-  background: color-mix(in srgb, var(--mantine-color-dark-7) 48%, transparent);
-  border-radius: 8px;
 }
 
 .detail-key {
@@ -682,8 +676,14 @@ body {
   background: transparent;
   border-left: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 64%, transparent);
   border-radius: 0;
+  padding-left: 18px !important;
   position: sticky;
   top: 0;
+}
+
+.detail-repositories {
+  border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 44%, transparent);
+  padding-bottom: 14px;
 }
 
 .detail-tile {

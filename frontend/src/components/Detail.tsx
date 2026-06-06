@@ -9,7 +9,6 @@ import {
   Button,
   Group,
   Paper,
-  SimpleGrid,
   Stack,
   Table,
   Text,
@@ -51,14 +50,11 @@ export function DetailPage(props: {
                 <StatusPill status={props.detail.item.status} />
               </Group>
               <Title className="detail-title" order={1}>{title}</Title>
+              <DetailActions detail={props.detail} />
             </Stack>
           </Paper>
 
-          {props.detail.kind === "issue" ? (
-            <IssueDetails issue={props.detail.item} />
-          ) : (
-            <PullRequestDetails pr={props.detail.item} />
-          )}
+          {props.detail.kind === "issue" ? <IssueRepositories issue={props.detail.item} /> : null}
 
           <Group className="timeline-heading" justify="space-between">
             <Text fw={800}>Task timeline</Text>
@@ -81,65 +77,43 @@ export function DetailPage(props: {
   );
 }
 
-function IssueDetails({ issue }: { issue: IssueStatus }) {
-  const repos = issueRepos(issue);
-  const prs = issuePullRequests(issue);
-  return (
-    <Paper className="detail-content-card" p="md">
-      <Stack gap="md">
-        <Group gap="xs">
-          {prs[0] ? <Button component="a" href={prs[0]} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
-          {issue.project_url ? <Button component="a" href={issue.project_url} leftSection={<IconFolder size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">Project</Button> : null}
-          {issue.url ? <Button component="a" href={issue.url} leftSection={<IconExternalLink size={14} />} target="_blank" rel="noopener noreferrer" size="xs">Linear</Button> : null}
-        </Group>
-        <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
-          <DetailTile label="Project" value={issue.project} href={issue.project_url} />
-          <DetailTile label="Pull request">
-            {prs.length ? (
-              <Stack gap={2}>
-                {prs.map((pr) => (
-                  <ExternalLink href={pr} key={pr}>{prLabel(pr)}</ExternalLink>
-                ))}
-              </Stack>
-            ) : null}
-          </DetailTile>
-          <DetailTile label="Changed repos" value={issue.changed_repos ?? legacyChangedRepos(issue)} />
-          <DetailTile label="Updated" value={issue.updated_at} />
-        </SimpleGrid>
-        {repos.length ? (
-          <Box>
-            <Text c="dimmed" size="sm">Repositories</Text>
-            <Stack gap={4} mt={4}>
-              {repos.map((repo) => (
-                <Text className="truncate" key={repo.key} size="sm">
-                  {[repo.key, repo.github, repo.path, repo.base].filter(Boolean).join(" · ")}
-                </Text>
-              ))}
-            </Stack>
-          </Box>
-        ) : null}
-      </Stack>
-    </Paper>
-  );
+function DetailActions({ detail }: { detail: SelectedDetail }) {
+  if (detail.kind === "issue") {
+    const issue = detail.item;
+    const prs = issuePullRequests(issue);
+    return (
+      <Group gap="xs">
+        {prs[0] ? <Button component="a" href={prs[0]} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
+        {issue.project_url ? <Button component="a" href={issue.project_url} leftSection={<IconFolder size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">Project</Button> : null}
+        {issue.url ? <Button component="a" href={issue.url} leftSection={<IconExternalLink size={14} />} target="_blank" rel="noopener noreferrer" size="xs">Linear</Button> : null}
+      </Group>
+    );
+  }
+  return detail.item.url ? (
+    <Group>
+      <Button component="a" href={detail.item.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">
+        GitHub
+      </Button>
+    </Group>
+  ) : null;
 }
 
-function PullRequestDetails({ pr }: { pr: PullRequestStatus }) {
+function IssueRepositories({ issue }: { issue: IssueStatus }) {
+  const repos = issueRepos(issue);
+  if (!repos.length) {
+    return null;
+  }
   return (
-    <Paper className="detail-content-card" p="md">
-      <Stack gap="md">
-        {pr.url ? <Group><Button component="a" href={pr.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">GitHub</Button></Group> : null}
-        <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
-          <DetailTile label="Issue" value={pr.issue} />
-          <DetailTile label="Repo key" value={pr.repo_key} />
-          <DetailTile label="Feedback" value={pr.feedback_count?.toString()} />
-          <DetailTile label="Updated" value={pr.updated_at} />
-          <DetailTile label="Repository" value={pr.repo} />
-          <DetailTile label="Branch" value={pr.branch} />
-          <DetailTile label="Base" value={pr.base} />
-          <DetailTile label="Repo path" value={pr.repo_path} />
-        </SimpleGrid>
+    <Box className="detail-repositories">
+      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Repositories</Text>
+      <Stack gap={4} mt={4}>
+        {repos.map((repo) => (
+          <Text className="truncate" key={repo.key} size="sm">
+            {[repo.key, repo.github, repo.path, repo.base].filter(Boolean).join(" · ")}
+          </Text>
+        ))}
       </Stack>
-    </Paper>
+    </Box>
   );
 }
 
