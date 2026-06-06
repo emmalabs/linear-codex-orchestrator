@@ -1,3 +1,20 @@
+export type StatusEvent = {
+  status?: string;
+  source?: string;
+  timestamp?: string;
+  issue?: string;
+  repo?: string;
+  repo_key?: string;
+  repo_path?: string;
+  number?: number;
+  title?: string;
+  url?: string;
+  branch?: string;
+  base?: string;
+  feedback_count?: number;
+  task_key?: string;
+};
+
 export type IssueStatus = {
   identifier?: string;
   title?: string;
@@ -10,6 +27,7 @@ export type IssueStatus = {
   prs?: string;
   status?: string;
   updated_at?: string;
+  events?: StatusEvent[];
 };
 
 export type PullRequestStatus = {
@@ -25,6 +43,7 @@ export type PullRequestStatus = {
   feedback_count?: number;
   status?: string;
   updated_at?: string;
+  events?: StatusEvent[];
 };
 
 export type StageLogSummary = {

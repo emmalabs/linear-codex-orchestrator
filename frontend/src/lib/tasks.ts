@@ -57,6 +57,11 @@ function issueTaskKeys(issue: IssueStatus) {
   if (issue.identifier) {
     keys.add(issue.identifier.toLowerCase().replace("_", "-"));
   }
+  for (const event of issue.events ?? []) {
+    if (event.task_key) {
+      keys.add(event.task_key.toLowerCase());
+    }
+  }
   return keys;
 }
 

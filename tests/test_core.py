@@ -30,8 +30,8 @@ from linear_codex_orchestrator.orchestrator import (
     Orchestrator,
     codex_log_path,
     implementation_comment,
+    issue_identifier_from_pr,
     log_session_start,
-    orchestration_log_path,
     planner_block_reason,
     planner_blocked_comment,
     planner_is_blocked,
@@ -40,7 +40,6 @@ from linear_codex_orchestrator.orchestrator import (
     read_status,
     resume_plan,
     start_comment,
-    status_path,
     truncate_text,
     update_issue_status,
     update_pr_status,
@@ -441,7 +440,13 @@ class CoreTests(unittest.TestCase):
                     ),
                 )
                 update_issue_status(issue, "Implemented", changed_repos="web")
-                update_pr_status(pr, "Ready for review", issue="ENG-1", repo_key="web", repo_path=Path("/tmp/workspace/web"))
+                update_pr_status(
+                    pr,
+                    "Ready for review",
+                    issue="ENG-1",
+                    repo_key="web",
+                    repo_path=Path("/tmp/workspace/web"),
+                )
                 status = read_status()
         self.assertEqual(status["issues"]["ENG-1"]["status"], "Implemented")
         self.assertEqual(status["issues"]["ENG-1"]["workspace_path"], "/tmp/workspace")
@@ -450,6 +455,155 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(status["prs"]["acme/web#12"]["status"], "Ready for review")
         self.assertEqual(status["prs"]["acme/web#12"]["issue"], "ENG-1")
         self.assertEqual(status["prs"]["acme/web#12"]["repo_path"], "/tmp/workspace/web")
+        self.assertEqual(
+            [event["status"] for event in status["issues"]["ENG-1"]["events"]],
+            ["Reviewing", "Implemented"],
+        )
+        self.assertEqual(status["prs"]["acme/web#12"]["events"][0]["status"], "Ready for review")
+        self.assertEqual(status["prs"]["acme/web#12"]["events"][0]["source"], "pr")
+
+    def test_issue_identifier_from_pr_prefers_title_over_branch(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="CODEX-4: Show PR feedback activity",
+            head_branch="codex/eng-99-fallback",
+            base_branch="develop",
+        )
+        self.assertEqual(issue_identifier_from_pr(pr), "CODEX-4")
+
+    def test_issue_identifier_from_pr_uses_branch_fallback(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="Show PR feedback activity",
+            head_branch="codex/codex-4-show-pr-feedback-activity",
+            base_branch="develop",
+        )
+        self.assertEqual(issue_identifier_from_pr(pr), "CODEX-4")
+
+    def test_status_events_are_bounded(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                for index in range(55):
+                    update_issue_status(issue, f"Step {index}")
+                status = read_status()
+        events = status["issues"]["ENG-1"]["events"]
+        self.assertEqual(len(events), 50)
+        self.assertEqual(events[0]["status"], "Step 5")
+        self.assertEqual(events[-1]["status"], "Step 54")
+
+    def test_process_pr_feedback_records_issue_linked_events_from_title(self) -> None:
+        class FakeGitHub:
+            async def close(self) -> None:
+                return None
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return [
+                    PullRequestFeedback(
+                        key="comment-1",
+                        kind="comment",
+                        author="reviewer",
+                        body="Please adjust this.",
+                        url="https://github.com/acme/web/pull/12#issuecomment-1",
+                    )
+                ]
+
+        class FakeLinear:
+            async def close(self) -> None:
+                return None
+
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/no-issue-here",
+            base_branch="develop",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "status.json"
+            settings = Settings(workspace_map={}, dry_run=True, lock_dir=tmp_path / "locks")
+            orchestrator = Orchestrator(settings, linear=FakeLinear(), github=FakeGitHub())
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status_file):
+                asyncio.run(
+                    orchestrator.process_pr_feedback(
+                        "web",
+                        RepoConfig("acme/web", tmp_path / "web", "develop"),
+                        pr,
+                    )
+                )
+                status = read_status()
+
+        self.assertEqual(status["prs"]["acme/web#12"]["issue"], "ENG-1")
+        self.assertEqual(status["prs"]["acme/web#12"]["events"][0]["status"], "Feedback found")
+        issue_event = status["issues"]["ENG-1"]["events"][0]
+        self.assertEqual(issue_event["status"], "Feedback found")
+        self.assertEqual(issue_event["source"], "pr-feedback")
+        self.assertEqual(issue_event["task_key"], "web-12")
+
+    def test_process_pr_feedback_records_pr_only_events_without_issue_identifier(self) -> None:
+        class FakeGitHub:
+            async def close(self) -> None:
+                return None
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return [
+                    PullRequestFeedback(
+                        key="comment-1",
+                        kind="comment",
+                        author="reviewer",
+                        body="Please adjust this.",
+                        url="https://github.com/acme/web/pull/12#issuecomment-1",
+                    )
+                ]
+
+        class FakeLinear:
+            async def close(self) -> None:
+                return None
+
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="Ship it",
+            head_branch="codex/ship-it",
+            base_branch="develop",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "status.json"
+            settings = Settings(workspace_map={}, dry_run=True, lock_dir=tmp_path / "locks")
+            orchestrator = Orchestrator(settings, linear=FakeLinear(), github=FakeGitHub())
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status_file):
+                asyncio.run(
+                    orchestrator.process_pr_feedback(
+                        "web",
+                        RepoConfig("acme/web", tmp_path / "web", "develop"),
+                        pr,
+                    )
+                )
+                status = read_status()
+
+        self.assertEqual(status["issues"], {})
+        self.assertNotIn("issue", status["prs"]["acme/web#12"])
+        self.assertEqual(status["prs"]["acme/web#12"]["events"][0]["status"], "Feedback found")
 
     def test_web_log_index_and_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -18,7 +18,7 @@ import {
   Text,
   Title
 } from "@mantine/core";
-import type { IssueStatus, PullRequestStatus, SelectedDetail, StageLog, StageLogSummary, TaskLog } from "../types";
+import type { IssueStatus, PullRequestStatus, SelectedDetail, StageLog, StageLogSummary, StatusEvent, TaskLog } from "../types";
 import { formatBytes, formatCount } from "../lib/format";
 import { stageName } from "../lib/orchestration";
 import { issuePullRequests, issueRepos, legacyChangedRepos, prLabel, tasksForDetail } from "../lib/tasks";
@@ -45,6 +45,8 @@ export function DetailDrawer(props: {
           ) : (
             <PullRequestDetails pr={props.detail.item} />
           )}
+          <Divider label="Activity" labelPosition="left" />
+          <Activity events={props.detail.item.events ?? []} />
           <Divider label="Task logs" labelPosition="left" />
           {matchingTasks.length ? (
             matchingTasks.map((task) => <TaskDetails key={task.key} task={task} />)
@@ -55,6 +57,58 @@ export function DetailDrawer(props: {
       ) : null}
     </Drawer>
   );
+}
+
+function Activity({ events }: { events: StatusEvent[] }) {
+  const latest = [...events].reverse();
+  if (!latest.length) {
+    return <Text c="dimmed" size="sm">No activity recorded yet.</Text>;
+  }
+  return (
+    <Stack gap="xs">
+      {latest.map((event, index) => (
+        <Paper withBorder p="sm" key={`${event.timestamp ?? index}-${event.status ?? "event"}`}>
+          <Group align="flex-start" justify="space-between" gap="md" wrap="nowrap">
+            <Box miw={0}>
+              <Group gap="xs">
+                <Badge color={event.source === "pr-feedback" ? "violet" : event.source === "pr" ? "grape" : "blue"} size="sm" variant="light">
+                  {event.source || "activity"}
+                </Badge>
+                <Text fw={700} size="sm">{event.status || "Unknown"}</Text>
+              </Group>
+              <Text c="dimmed" className="truncate" mt={4} size="sm">
+                {eventDescription(event)}
+              </Text>
+            </Box>
+            <Text c="dimmed" size="xs" ta="right" miw={96}>
+              {formatEventTime(event.timestamp)}
+            </Text>
+          </Group>
+        </Paper>
+      ))}
+    </Stack>
+  );
+}
+
+function eventDescription(event: StatusEvent) {
+  const parts = [
+    event.repo ? `${event.repo}#${event.number ?? ""}`.replace(/#$/, "") : undefined,
+    event.title,
+    event.branch,
+    event.feedback_count !== undefined ? `${event.feedback_count} feedback item(s)` : undefined,
+  ].filter(Boolean);
+  return parts.join(" - ") || "Orchestrator status update";
+}
+
+function formatEventTime(value?: string) {
+  if (!value) {
+    return "No timestamp";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return `${date.toLocaleTimeString()} ${date.toLocaleDateString()}`;
 }
 
 function IssueDetails({ issue }: { issue: IssueStatus }) {

@@ -39,6 +39,7 @@ STAGES_AFTER_IMPLEMENTATION = {
     "pr_creating",
 }
 STAGES_AFTER_OPTIMIZATION = {"optimized", "reviewing", "review_fixing", "review_fixed", "pr_creating"}
+STATUS_EVENT_LIMIT = 50
 
 
 class Orchestrator:
@@ -163,23 +164,45 @@ class Orchestrator:
             if not lock.acquired:
                 log(f"Skipping {repo.github}#{pr.number}: PR feedback lock is already held")
                 return
+            linked_issue = issue_identifier_from_pr(pr)
             feedback = await self.github.pr_feedback(repo.github, pr.number)
             state = pr_feedback_state(self.settings.lock_dir, repo.github, pr.number)
             seen = read_processed_feedback(state)
             new_feedback = [item for item in feedback if item.key not in seen]
             if not new_feedback:
                 log(f"{repo.github}#{pr.number}: no new PR feedback")
-                update_pr_status(pr, "No new feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=0)
+                update_pr_feedback_status(
+                    pr,
+                    "No new feedback",
+                    issue=linked_issue,
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=0,
+                )
                 return
             log(f"{repo.github}#{pr.number}: found {len(new_feedback)} new feedback item(s)")
-            update_pr_status(pr, "Feedback found", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+            update_pr_feedback_status(
+                pr,
+                "Feedback found",
+                issue=linked_issue,
+                repo_key=repo_key,
+                repo_path=repo.path,
+                feedback_count=len(new_feedback),
+            )
             if self.settings.dry_run:
                 log(f"[dry-run] Would address PR feedback on {repo.github}#{pr.number}")
                 return
 
             run_git(repo.path, "fetch", "origin", pr.head_branch)
             run_git(repo.path, "checkout", "-B", pr.head_branch, f"origin/{pr.head_branch}")
-            update_pr_status(pr, "Fixing feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+            update_pr_feedback_status(
+                pr,
+                "Fixing feedback",
+                issue=linked_issue,
+                repo_key=repo_key,
+                repo_path=repo.path,
+                feedback_count=len(new_feedback),
+            )
             summary = await self._fix_pr_feedback(repo_key, repo, pr, new_feedback)
             if has_changes(repo.path):
                 log(f"{repo.github}#{pr.number}: committing PR feedback fixes")
@@ -187,7 +210,14 @@ class Orchestrator:
                 log(f"{repo.github}#{pr.number}: pushing PR feedback fixes")
                 push_branch(repo.path, pr.head_branch)
                 await self.github.comment_on_pr(repo.github, pr.number, pr_feedback_comment(summary))
-                update_pr_status(pr, "Feedback addressed", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+                update_pr_feedback_status(
+                    pr,
+                    "Feedback addressed",
+                    issue=linked_issue,
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=len(new_feedback),
+                )
             else:
                 log(f"{repo.github}#{pr.number}: no changes after PR feedback pass")
                 await self.github.comment_on_pr(
@@ -195,7 +225,14 @@ class Orchestrator:
                     pr.number,
                     pr_feedback_no_changes_comment(summary),
                 )
-                update_pr_status(pr, "Checked feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+                update_pr_feedback_status(
+                    pr,
+                    "Checked feedback",
+                    issue=linked_issue,
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=len(new_feedback),
+                )
             write_processed_feedback(state, seen | {item.key for item in new_feedback})
 
     async def process_issue(self, issue: LinearIssue, resume: bool = False) -> None:
@@ -1126,6 +1163,7 @@ def update_issue_status(issue: LinearIssue, status: str, **extra: object) -> Non
         }
     )
     current.update({key: value for key, value in extra.items() if value is not None})
+    append_status_event(current, status, source="issue", **extra)
     issues[issue.identifier] = current
     write_status(payload)
 
@@ -1167,8 +1205,121 @@ def update_pr_status(
         current["repo_path"] = str(repo_path)
     if feedback_count is not None:
         current["feedback_count"] = feedback_count
+    append_status_event(
+        current,
+        status,
+        source="pr",
+        issue=issue,
+        repo=pr.repo,
+        number=pr.number,
+        title=pr.title,
+        url=pr.url,
+        branch=pr.head_branch,
+        base=pr.base_branch,
+        repo_key=repo_key,
+        repo_path=str(repo_path) if repo_path else None,
+        feedback_count=feedback_count,
+        task_key=pr_feedback_task_key(repo_key, pr),
+    )
     prs[key] = current
     write_status(payload)
+
+
+def update_pr_feedback_status(
+    pr: OpenPullRequest,
+    status: str,
+    *,
+    issue: str | None = None,
+    repo_key: str | None = None,
+    repo_path: Path | None = None,
+    feedback_count: int | None = None,
+) -> None:
+    update_pr_status(
+        pr,
+        status,
+        issue=issue,
+        repo_key=repo_key,
+        repo_path=repo_path,
+        feedback_count=feedback_count,
+    )
+    if issue:
+        update_issue_pr_feedback_event(
+            issue,
+            status,
+            pr,
+            repo_key=repo_key,
+            repo_path=repo_path,
+            feedback_count=feedback_count,
+        )
+
+
+def update_issue_pr_feedback_event(
+    issue_identifier: str,
+    status: str,
+    pr: OpenPullRequest,
+    *,
+    repo_key: str | None = None,
+    repo_path: Path | None = None,
+    feedback_count: int | None = None,
+) -> None:
+    payload = read_status()
+    issues = payload["issues"]
+    assert isinstance(issues, dict)
+    current = issues.get(issue_identifier, {})
+    if not isinstance(current, dict):
+        current = {}
+    current.setdefault("identifier", issue_identifier)
+    current["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    append_status_event(
+        current,
+        status,
+        source="pr-feedback",
+        repo=pr.repo,
+        number=pr.number,
+        title=pr.title,
+        url=pr.url,
+        branch=pr.head_branch,
+        base=pr.base_branch,
+        repo_key=repo_key,
+        repo_path=str(repo_path) if repo_path else None,
+        feedback_count=feedback_count,
+        task_key=pr_feedback_task_key(repo_key, pr),
+    )
+    issues[issue_identifier] = current
+    write_status(payload)
+
+
+def append_status_event(record: dict[str, object], status: str, *, source: str, **extra: object) -> None:
+    event = {
+        "status": status,
+        "source": source,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    event.update({key: value for key, value in extra.items() if value is not None})
+    events = record.get("events", [])
+    if not isinstance(events, list):
+        events = []
+    events.append(event)
+    record["events"] = events[-STATUS_EVENT_LIMIT:]
+
+
+def issue_identifier_from_pr(pr: OpenPullRequest) -> str | None:
+    return issue_identifier(pr.title) or issue_identifier(pr.head_branch)
+
+
+def issue_identifier(value: str) -> str | None:
+    match = re.search(
+        r"(?<![A-Za-z0-9])([A-Z][A-Z0-9]*-\d+)(?![A-Za-z0-9])",
+        value,
+        re.IGNORECASE,
+    )
+    return match.group(1).upper() if match else None
+
+
+def pr_feedback_task_key(repo_key: str | None, pr: OpenPullRequest) -> str | None:
+    if not repo_key:
+        return None
+    return f"{repo_key}-{pr.number}".lower()
 
 
 def workspace_status_context(workspace: WorkspaceConfig) -> dict[str, object]:
