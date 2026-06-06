@@ -275,6 +275,7 @@ export function App() {
                     onSelectDetail={openDetail}
                     orchestrationRef={orchestrationRef}
                     shouldFollowRef={shouldFollowRef}
+                    workspaceMap={configResponse?.config.workspace_map}
                   />
                 </Box>
                 <Box style={{ display: activeTab === "workspaces" || activeTab === "settings" ? "block" : "none" }}>

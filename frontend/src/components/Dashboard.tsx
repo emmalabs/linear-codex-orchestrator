@@ -7,12 +7,13 @@ import {
   Group,
   Paper,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Text,
   UnstyledButton
 } from "@mantine/core";
-import type { DashboardData, IssueStatus, PullRequestStatus, SelectedDetail, TaskLog } from "../types";
+import type { DashboardData, IssueStatus, PullRequestStatus, SelectedDetail, TaskLog, WorkspaceMap } from "../types";
 import { formatBytes, relativeTime, statusGroup, statusTone, type StatusGroup, type StatusTone } from "../lib/format";
 import { currentStep, logLineKind, stageName } from "../lib/orchestration";
 import { currentLiveActivity } from "../lib/tasks";
@@ -21,6 +22,7 @@ import { StatusPill } from "./common";
 type FeedMode = "issues" | "prs";
 type FeedFilter = "All" | StatusGroup;
 
+const allWorkspaces = "__all__";
 const filterOrder: FeedFilter[] = ["All", "Active", "Needs attention", "Ready", "Done"];
 const groupOrder: StatusGroup[] = ["Active", "Needs attention", "Ready", "Done"];
 
@@ -31,6 +33,7 @@ export function DashboardView(props: {
   onSelectDetail: (detail: SelectedDetail) => void;
   orchestrationRef: React.RefObject<HTMLDivElement | null>;
   shouldFollowRef: React.MutableRefObject<boolean>;
+  workspaceMap?: WorkspaceMap;
 }) {
   return (
     <Box className="command-grid">
@@ -39,6 +42,7 @@ export function DashboardView(props: {
         mode={props.mode}
         onArchive={props.onArchive}
         onSelectDetail={props.onSelectDetail}
+        workspaceMap={props.workspaceMap}
       />
       <RightRail
         data={props.data}
@@ -54,17 +58,38 @@ function FeedPanel(props: {
   mode: FeedMode;
   onArchive: (detail: SelectedDetail) => Promise<void>;
   onSelectDetail: (detail: SelectedDetail) => void;
+  workspaceMap?: WorkspaceMap;
 }) {
   const [filter, setFilter] = React.useState<FeedFilter>("All");
+  const [workspaceFilter, setWorkspaceFilter] = React.useState(allWorkspaces);
+  const workspaceCatalog = React.useMemo(
+    () => workspaceCatalogFromConfig(props.workspaceMap),
+    [props.workspaceMap]
+  );
   const items = React.useMemo(
     () => props.mode === "issues"
-      ? props.data.issues.map((item) => issueFeedItem(item, props.onArchive, props.onSelectDetail))
-      : props.data.prs.map((item) => prFeedItem(item, props.onArchive, props.onSelectDetail)),
-    [props.data.issues, props.data.prs, props.mode, props.onArchive, props.onSelectDetail]
+      ? props.data.issues.map((item) => issueFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail))
+      : props.data.prs.map((item) => prFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail)),
+    [props.data.issues, props.data.prs, props.mode, workspaceCatalog, props.onArchive, props.onSelectDetail]
+  );
+  const workspaceOptions = React.useMemo(
+    () => workspaceOptionsFromItems(items),
+    [items]
+  );
+  React.useEffect(() => {
+    if (!workspaceOptions.some((option) => option.value === workspaceFilter)) {
+      setWorkspaceFilter(allWorkspaces);
+    }
+  }, [workspaceFilter, workspaceOptions]);
+  const filteredItems = React.useMemo(
+    () => workspaceFilter === allWorkspaces
+      ? items
+      : items.filter((item) => item.workspace.value === workspaceFilter),
+    [items, workspaceFilter]
   );
   const grouped = React.useMemo(() => {
     const buckets = new Map<StatusGroup, FeedItem[]>();
-    for (const item of items) {
+    for (const item of filteredItems) {
       const group = statusGroup(item.status);
       if (!buckets.has(group)) {
         buckets.set(group, []);
@@ -75,14 +100,14 @@ function FeedPanel(props: {
       bucket.sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt));
     }
     return buckets;
-  }, [items]);
+  }, [filteredItems]);
   const counts = React.useMemo(() => {
-    const values = new Map<FeedFilter, number>([["All", items.length]]);
+    const values = new Map<FeedFilter, number>([["All", filteredItems.length]]);
     for (const group of groupOrder) {
       values.set(group, grouped.get(group)?.length ?? 0);
     }
     return values;
-  }, [grouped, items.length]);
+  }, [filteredItems.length, grouped]);
   const visibleGroups = groupOrder
     .map((group) => ({ group, items: grouped.get(group) ?? [] }))
     .filter((entry) => filter === "All" ? entry.items.length : entry.group === filter);
@@ -98,17 +123,29 @@ function FeedPanel(props: {
             {props.mode === "issues" ? "Issues Feed" : "Pull Requests Feed"}
           </Text>
         </Box>
-        <Group className="feed-filters" gap={6}>
-          {filterOrder.map((item) => (
-            <UnstyledButton
-              className={`feed-filter ${filter === item ? "feed-filter-active" : ""}`}
-              key={item}
-              onClick={() => setFilter(item)}
-            >
-              <span>{item}</span>
-              <span className="feed-filter-count">{counts.get(item) ?? 0}</span>
-            </UnstyledButton>
-          ))}
+        <Group className="feed-controls" gap="xs" justify="flex-end">
+          {workspaceOptions.length > 2 ? (
+            <Select
+              aria-label="Workspace"
+              className="workspace-filter"
+              data={workspaceOptions}
+              value={workspaceFilter}
+              onChange={(value) => setWorkspaceFilter(value ?? allWorkspaces)}
+              size="xs"
+            />
+          ) : null}
+          <Group className="feed-filters" gap={6}>
+            {filterOrder.map((item) => (
+              <UnstyledButton
+                className={`feed-filter ${filter === item ? "feed-filter-active" : ""}`}
+                key={item}
+                onClick={() => setFilter(item)}
+              >
+                <span>{item}</span>
+                <span className="feed-filter-count">{counts.get(item) ?? 0}</span>
+              </UnstyledButton>
+            ))}
+          </Group>
         </Group>
       </Group>
 
@@ -151,12 +188,14 @@ type FeedItem = {
   updatedAt?: string;
   meta: string[];
   tone: StatusTone;
+  workspace: WorkspaceChoice;
   onArchive?: () => Promise<void>;
   onOpen: () => void;
 };
 
 function issueFeedItem(
   issue: IssueStatus,
+  workspaceCatalog: WorkspaceCatalogItem[],
   onArchive: (detail: SelectedDetail) => Promise<void>,
   onSelectDetail: (detail: SelectedDetail) => void
 ): FeedItem {
@@ -175,6 +214,7 @@ function issueFeedItem(
     updatedAt: issue.updated_at,
     meta,
     tone: statusTone(issue.status),
+    workspace: workspaceForIssue(issue, workspaceCatalog),
     onArchive: issue.identifier ? () => onArchive(detail) : undefined,
     onOpen: () => onSelectDetail(detail)
   };
@@ -182,6 +222,7 @@ function issueFeedItem(
 
 function prFeedItem(
   pr: PullRequestStatus,
+  workspaceCatalog: WorkspaceCatalogItem[],
   onArchive: (detail: SelectedDetail) => Promise<void>,
   onSelectDetail: (detail: SelectedDetail) => void
 ): FeedItem {
@@ -201,9 +242,97 @@ function prFeedItem(
     updatedAt: pr.updated_at,
     meta,
     tone: statusTone(pr.status),
+    workspace: workspaceForPr(pr, workspaceCatalog),
     onArchive: pr.key ? () => onArchive(detail) : undefined,
     onOpen: () => onSelectDetail(detail)
   };
+}
+
+type WorkspaceCatalogItem = {
+  label: string;
+  path?: string;
+  value: string;
+};
+
+type WorkspaceChoice = {
+  label: string;
+  value: string;
+};
+
+function workspaceCatalogFromConfig(workspaceMap?: WorkspaceMap): WorkspaceCatalogItem[] {
+  return Object.entries(workspaceMap ?? {}).map(([teamKey, workspace]) => ({
+    label: teamKey,
+    path: normalizePath(workspace.path),
+    value: `workspace:${teamKey}`
+  }));
+}
+
+function workspaceOptionsFromItems(items: FeedItem[]) {
+  const counts = new Map<string, number>();
+  const labels = new Map<string, string>();
+  for (const item of items) {
+    counts.set(item.workspace.value, (counts.get(item.workspace.value) ?? 0) + 1);
+    labels.set(item.workspace.value, item.workspace.label);
+  }
+  const options = [...counts.entries()]
+    .map(([value, count]) => ({ value, label: `${labels.get(value) ?? "Unknown"} (${count})` }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+  return [{ value: allWorkspaces, label: `All workspaces (${items.length})` }, ...options];
+}
+
+function workspaceForIssue(issue: IssueStatus, catalog: WorkspaceCatalogItem[]): WorkspaceChoice {
+  const byTeam = issue.team ? catalog.find((workspace) => workspace.label === issue.team) : undefined;
+  if (byTeam) {
+    return workspaceChoice(byTeam);
+  }
+  const byPath = workspaceForPath(issue.workspace_path, catalog);
+  if (byPath) {
+    return workspaceChoice(byPath);
+  }
+  if (issue.team) {
+    return { value: `team:${issue.team}`, label: issue.team };
+  }
+  if (issue.workspace_path) {
+    return { value: `path:${normalizePath(issue.workspace_path)}`, label: pathLabel(issue.workspace_path) };
+  }
+  return { value: "unknown", label: "Unknown" };
+}
+
+function workspaceForPr(pr: PullRequestStatus, catalog: WorkspaceCatalogItem[]): WorkspaceChoice {
+  const byPath = workspaceForPath(pr.repo_path, catalog);
+  if (byPath) {
+    return workspaceChoice(byPath);
+  }
+  if (pr.repo_key) {
+    return { value: `repo:${pr.repo_key}`, label: pr.repo_key };
+  }
+  return { value: "unknown", label: "Unknown" };
+}
+
+function workspaceForPath(path: string | undefined, catalog: WorkspaceCatalogItem[]) {
+  const normalized = normalizePath(path);
+  if (!normalized) {
+    return undefined;
+  }
+  return catalog.find((workspace) => {
+    if (!workspace.path) {
+      return false;
+    }
+    return normalized === workspace.path || normalized.startsWith(`${workspace.path}/`);
+  });
+}
+
+function workspaceChoice(workspace: WorkspaceCatalogItem): WorkspaceChoice {
+  return { value: workspace.value, label: workspace.label };
+}
+
+function normalizePath(path: string | undefined) {
+  return path?.replace(/\/+$/, "");
+}
+
+function pathLabel(path: string) {
+  const normalized = normalizePath(path) ?? path;
+  return normalized.split("/").filter(Boolean).pop() || normalized;
 }
 
 function prMeta(value: string) {
