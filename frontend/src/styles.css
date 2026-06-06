@@ -365,6 +365,24 @@ body {
   border-bottom: 0;
 }
 
+.issue-summary-main {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.issue-summary-title {
+  line-height: 1.25;
+}
+
+.issue-summary-meta {
+  margin-top: 3px;
+}
+
+.issue-summary-context {
+  flex: 0 1 132px;
+  overflow: hidden;
+}
+
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -372,7 +390,7 @@ body {
 }
 
 .context-text {
-  max-width: 220px;
+  max-width: 100%;
 }
 
 .formatted-log-message {
@@ -516,5 +534,9 @@ body {
 
   .summary-row [class*="mantine-Group-root"] {
     align-items: flex-start;
+  }
+
+  .issue-summary-context {
+    flex-basis: 104px;
   }
 }
