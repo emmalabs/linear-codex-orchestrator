@@ -159,17 +159,20 @@ function LogLine({ line }: { line: string }) {
 }
 
 function IssueItem({ issue, onOpen }: { issue: IssueStatus; onOpen: () => void }) {
+  const title = issue.title || "Untitled issue";
   return (
     <UnstyledRow onOpen={onOpen}>
-      <Box miw={0}>
-        <Group gap="xs" wrap="nowrap">
-          <Text c="blue" fw={700}>{issue.identifier || "Issue"}</Text>
+      <Box className="issue-summary-main" miw={0}>
+        <Text className="truncate issue-summary-title" fw={700} title={title}>
+          {title}
+        </Text>
+        <Group className="issue-summary-meta" gap="xs" wrap="nowrap">
+          <Text c="blue" fw={700} size="xs">{issue.identifier || "Issue"}</Text>
           <StatusPill status={issue.status} />
         </Group>
-        <Text c="dimmed" className="truncate" size="sm">{issue.title || "Untitled issue"}</Text>
       </Box>
-      <Stack align="flex-end" gap={2} miw={120}>
-        <Text className="truncate context-text" c="dimmed" size="sm">
+      <Stack align="flex-end" className="issue-summary-context" gap={2} miw={0}>
+        <Text className="truncate context-text" c="dimmed" size="sm" title={issue.project || "No project"}>
           {issue.project || "No project"}
         </Text>
         <Text c="dimmed" size="xs">{issue.updated_at || ""}</Text>
