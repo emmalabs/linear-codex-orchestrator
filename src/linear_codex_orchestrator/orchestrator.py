@@ -26,6 +26,19 @@ from .linear_api_client import LinearApiClient
 from .locks import lock_for_repo
 from .models import LinearIssue, OpenPullRequest, PullRequest, PullRequestFeedback, ReviewResult
 from .prompt_templates import render_prompt
+from .run_state import clear_issue_run_state, read_issue_run_state, write_issue_run_state
+
+
+STAGES_AFTER_IMPLEMENTATION = {
+    "implemented",
+    "optimizing",
+    "optimized",
+    "reviewing",
+    "review_fixing",
+    "review_fixed",
+    "pr_creating",
+}
+STAGES_AFTER_OPTIMIZATION = {"optimized", "reviewing", "review_fixing", "review_fixed", "pr_creating"}
 
 
 class Orchestrator:
@@ -258,30 +271,71 @@ class Orchestrator:
         try:
             log(f"{issue.identifier}: reading full Linear issue context")
             issue_context = await self.linear.issue_context(issue)
+            run_state = read_issue_run_state(issue.id, workspace.path) if resume else None
             if resume:
                 log(f"{issue.identifier}: resuming existing branch {branch}")
                 update_issue_status(issue, "Resuming branch")
                 self.checkout_existing_branch(workspace, branch)
-                plan = resume_plan()
-                log(f"{issue.identifier}: resumed implementation started")
-                update_issue_status(issue, "Implementing")
-                implementation_summary = await self._implement(issue, workspace, issue_context, plan)
-                log(f"{issue.identifier}: resumed implementation finished; detecting changed repos")
-                changed_repos = self.changed_repos(workspace)
+                plan = run_state.plan if run_state and run_state.plan else resume_plan()
+                implementation_summary = (
+                    run_state.implementation_summary
+                    if run_state and run_state.implementation_summary
+                    else "Resumed from existing repository changes after an interrupted previous run."
+                )
+                resume_stage = run_state.stage if run_state else ""
+                if resume_stage:
+                    log(f"{issue.identifier}: local run-state stage is {resume_stage}")
+                if resume_stage not in STAGES_AFTER_IMPLEMENTATION:
+                    write_issue_run_state(
+                        issue.id,
+                        issue.identifier,
+                        workspace.path,
+                        branch,
+                        "implementing",
+                        plan=plan,
+                    )
+                    log(f"{issue.identifier}: resumed implementation started")
+                    update_issue_status(issue, "Implementing")
+                    implementation_summary = await self._implement(issue, workspace, issue_context, plan)
+                    log(f"{issue.identifier}: resumed implementation finished; detecting changed repos")
+                    changed_repos = self.changed_repos(workspace)
+                    self.commit_phase_changes(issue, changed_repos, "implementation")
+                    write_issue_run_state(
+                        issue.id,
+                        issue.identifier,
+                        workspace.path,
+                        branch,
+                        "implemented",
+                        plan=plan,
+                        implementation_summary=implementation_summary,
+                    )
+                else:
+                    log(f"{issue.identifier}: skipping implementation; resuming after {resume_stage}")
+                    changed_repos = self.changed_repos(workspace)
                 log(f"{issue.identifier}: changed repos: {', '.join(changed_repos) or 'none'}")
                 update_issue_status(issue, "Implemented", changed_repos=", ".join(changed_repos) or "none")
-                await self._try_linear_comment(issue, implementation_comment(changed_repos, implementation_summary))
+                if resume_stage not in STAGES_AFTER_IMPLEMENTATION:
+                    await self._try_linear_comment(issue, implementation_comment(changed_repos, implementation_summary))
             else:
                 log(f"{issue.identifier}: posting start comment")
                 await self.linear.comment(issue.id, start_comment(issue, workspace, branch))
                 log(f"{issue.identifier}: planning")
                 update_issue_status(issue, "Planning")
+                write_issue_run_state(issue.id, issue.identifier, workspace.path, branch, "planning")
                 plan = await self._plan(issue, workspace, issue_context)
                 log(f"{issue.identifier}: preparing branch {branch} in {len(workspace.repos)} repo(s)")
                 update_issue_status(issue, "Preparing branches")
                 for repo_key, repo in workspace.repos.items():
                     log(f"{issue.identifier}: ensuring {repo_key} branch {branch}")
                     ensure_branch(repo.path, repo.base, branch)
+                write_issue_run_state(
+                    issue.id,
+                    issue.identifier,
+                    workspace.path,
+                    branch,
+                    "branch_prepared",
+                    plan=plan,
+                )
                 log(f"{issue.identifier}: posting plan and moving to {self.settings.in_progress_status}")
                 await self.linear.comment(issue.id, plan_comment(plan))
                 await self.linear.move_issue(issue.id, self.settings.in_progress_status)
@@ -289,29 +343,78 @@ class Orchestrator:
 
                 log(f"{issue.identifier}: implementation started")
                 update_issue_status(issue, "Implementing")
+                write_issue_run_state(
+                    issue.id,
+                    issue.identifier,
+                    workspace.path,
+                    branch,
+                    "implementing",
+                    plan=plan,
+                )
                 implementation_summary = await self._implement(issue, workspace, issue_context, plan)
                 log(f"{issue.identifier}: implementation finished; detecting changed repos")
                 changed_repos = self.changed_repos(workspace)
                 log(f"{issue.identifier}: changed repos: {', '.join(changed_repos) or 'none'}")
                 update_issue_status(issue, "Implemented", changed_repos=", ".join(changed_repos) or "none")
+                self.commit_phase_changes(issue, changed_repos, "implementation")
+                write_issue_run_state(
+                    issue.id,
+                    issue.identifier,
+                    workspace.path,
+                    branch,
+                    "implemented",
+                    plan=plan,
+                    implementation_summary=implementation_summary,
+                )
                 await self._try_linear_comment(issue, implementation_comment(changed_repos, implementation_summary))
             if changed_repos:
-                log(f"{issue.identifier}: optimization started")
-                update_issue_status(issue, "Optimizing", changed_repos=", ".join(changed_repos))
-                optimization_summary = await self._optimize(
-                    issue,
-                    workspace,
-                    issue_context,
-                    plan,
-                    changed_repos,
-                    implementation_summary,
-                )
-                log(f"{issue.identifier}: optimization finished; detecting changed repos")
-                changed_repos = self.changed_repos(workspace)
-                update_issue_status(issue, "Optimized", changed_repos=", ".join(changed_repos) or "none")
-                await self._try_linear_comment(issue, optimization_comment(optimization_summary))
+                if resume and run_state and run_state.stage in STAGES_AFTER_OPTIMIZATION:
+                    log(f"{issue.identifier}: skipping optimization; resuming after {run_state.stage}")
+                else:
+                    log(f"{issue.identifier}: optimization started")
+                    update_issue_status(issue, "Optimizing", changed_repos=", ".join(changed_repos))
+                    write_issue_run_state(
+                        issue.id,
+                        issue.identifier,
+                        workspace.path,
+                        branch,
+                        "optimizing",
+                        plan=plan,
+                        implementation_summary=implementation_summary,
+                    )
+                    optimization_summary = await self._optimize(
+                        issue,
+                        workspace,
+                        issue_context,
+                        plan,
+                        changed_repos,
+                        implementation_summary,
+                    )
+                    log(f"{issue.identifier}: optimization finished; detecting changed repos")
+                    changed_repos = self.changed_repos(workspace)
+                    update_issue_status(issue, "Optimized", changed_repos=", ".join(changed_repos) or "none")
+                    self.commit_phase_changes(issue, changed_repos, "optimization")
+                    write_issue_run_state(
+                        issue.id,
+                        issue.identifier,
+                        workspace.path,
+                        branch,
+                        "optimized",
+                        plan=plan,
+                        implementation_summary=implementation_summary,
+                    )
+                    await self._try_linear_comment(issue, optimization_comment(optimization_summary))
             log(f"{issue.identifier}: review started")
             update_issue_status(issue, "Reviewing", changed_repos=", ".join(changed_repos) or "none")
+            write_issue_run_state(
+                issue.id,
+                issue.identifier,
+                workspace.path,
+                branch,
+                "reviewing",
+                plan=plan,
+                implementation_summary=implementation_summary,
+            )
             review = await self._review(issue, workspace, issue_context, plan, changed_repos)
             log(f"{issue.identifier}: review {'passed' if review.passed else 'failed'}")
             update_issue_status(issue, "Review passed" if review.passed else "Review failed")
@@ -319,6 +422,15 @@ class Orchestrator:
             if changed_repos and not review.passed:
                 log(f"{issue.identifier}: reviewer-fix pass started")
                 update_issue_status(issue, "Fixing review findings")
+                write_issue_run_state(
+                    issue.id,
+                    issue.identifier,
+                    workspace.path,
+                    branch,
+                    "review_fixing",
+                    plan=plan,
+                    implementation_summary=implementation_summary,
+                )
                 fix_summary = await self._fix_review_findings(
                     issue,
                     workspace,
@@ -329,6 +441,16 @@ class Orchestrator:
                 )
                 log(f"{issue.identifier}: reviewer-fix pass finished; re-review started")
                 changed_repos = self.changed_repos(workspace)
+                self.commit_phase_changes(issue, changed_repos, "review fixes")
+                write_issue_run_state(
+                    issue.id,
+                    issue.identifier,
+                    workspace.path,
+                    branch,
+                    "review_fixed",
+                    plan=plan,
+                    implementation_summary=implementation_summary,
+                )
                 await self._try_linear_comment(issue, review_fix_comment(fix_summary))
                 review = await self._review(issue, workspace, issue_context, plan, changed_repos)
                 log(f"{issue.identifier}: re-review {'passed' if review.passed else 'failed'}")
@@ -359,6 +481,7 @@ class Orchestrator:
         if not changed_repos:
             await self._try_linear_comment(issue, "Codex completed the run, but no git changes exist.")
             await self._clear_running_label(issue)
+            clear_issue_run_state(issue.id, workspace.path)
             log(f"{issue.identifier}: no changes detected; stopping")
             update_issue_status(issue, "No changes")
             return
@@ -369,10 +492,20 @@ class Orchestrator:
                 f"Codex reviewer did not approve an automatic PR yet.\n\n{review.summary}",
             )
             await self._clear_running_label(issue)
+            clear_issue_run_state(issue.id, workspace.path)
             log(f"{issue.identifier}: reviewer blocked automatic PR")
             update_issue_status(issue, "Reviewer blocked PR")
             return
 
+        write_issue_run_state(
+            issue.id,
+            issue.identifier,
+            workspace.path,
+            branch,
+            "pr_creating",
+            plan=plan,
+            implementation_summary=implementation_summary,
+        )
         prs: list[PullRequest] = []
         for repo_key, repo in changed_repos.items():
             if has_changes(repo.path):
@@ -415,6 +548,7 @@ class Orchestrator:
             self.linear.move_issue(issue.id, self.settings.in_review_status),
         )
         await self._clear_running_label(issue)
+        clear_issue_run_state(issue.id, workspace.path)
         log(f"{issue.identifier}: opened/updated {len(prs)} PR(s)")
         update_issue_status(issue, "PR ready", prs=", ".join(pr.url for pr in prs))
 
@@ -449,6 +583,17 @@ class Orchestrator:
             for repo_key, repo in workspace.repos.items()
             if has_changes(repo.path)
         ]
+
+    def commit_phase_changes(
+        self,
+        issue: LinearIssue,
+        changed_repos: dict[str, RepoConfig],
+        phase: str,
+    ) -> None:
+        for repo_key, repo in changed_repos.items():
+            if has_changes(repo.path):
+                log(f"{issue.identifier}: committing {phase} changes in {repo_key}")
+                commit_all(repo.path, f"{issue.identifier}: {phase}")
 
     def checkout_existing_branch(self, workspace: WorkspaceConfig, branch: str) -> None:
         missing: list[str] = []
