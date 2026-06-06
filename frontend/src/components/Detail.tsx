@@ -7,8 +7,6 @@ import {
   Badge,
   Box,
   Button,
-  Card,
-  Divider,
   Group,
   Paper,
   SimpleGrid,
@@ -21,7 +19,7 @@ import type { IssueStatus, PullRequestStatus, SelectedDetail, StageLog, StageLog
 import { formatBytes, formatCount } from "../lib/format";
 import { stageName } from "../lib/orchestration";
 import { issuePullRequests, issueRepos, legacyChangedRepos, prLabel, tasksForDetail } from "../lib/tasks";
-import { ExternalLink, MetricCard, StatusPill } from "./common";
+import { ExternalLink, StatusPill } from "./common";
 
 export function DetailPage(props: {
   detail: SelectedDetail;
@@ -46,7 +44,7 @@ export function DetailPage(props: {
 
       <Box className="detail-layout">
         <Stack className="detail-main" gap="md" miw={0}>
-          <Paper withBorder className="detail-title-panel" p="lg">
+          <Paper className="detail-title-panel" p="lg">
             <Stack gap="sm">
               <Group gap="xs" wrap="nowrap">
                 <Text className="detail-key" fw={800}>{key}</Text>
@@ -62,11 +60,16 @@ export function DetailPage(props: {
             <PullRequestDetails pr={props.detail.item} />
           )}
 
-          <Divider label="Task logs" labelPosition="left" />
+          <Group className="timeline-heading" justify="space-between">
+            <Text fw={800}>Task timeline</Text>
+            <Text c="dimmed" size="xs">{matchingTasks.length} task{matchingTasks.length === 1 ? "" : "s"}</Text>
+          </Group>
           {matchingTasks.length ? (
-            matchingTasks.map((task) => <TaskDetails key={task.key} task={task} />)
+            <Stack className="task-timeline" gap={0}>
+              {matchingTasks.map((task) => <TaskDetails key={task.key} task={task} />)}
+            </Stack>
           ) : (
-            <Paper withBorder p="md">
+            <Paper className="detail-empty-state" p="md">
               <Text c="dimmed" size="sm">No matching task logs yet.</Text>
             </Paper>
           )}
@@ -82,7 +85,7 @@ function IssueDetails({ issue }: { issue: IssueStatus }) {
   const repos = issueRepos(issue);
   const prs = issuePullRequests(issue);
   return (
-    <Card withBorder className="detail-content-card" padding="md">
+    <Paper className="detail-content-card" p="md">
       <Stack gap="md">
         <Group gap="xs">
           {prs[0] ? <Button component="a" href={prs[0]} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
@@ -116,13 +119,13 @@ function IssueDetails({ issue }: { issue: IssueStatus }) {
           </Box>
         ) : null}
       </Stack>
-    </Card>
+    </Paper>
   );
 }
 
 function PullRequestDetails({ pr }: { pr: PullRequestStatus }) {
   return (
-    <Card withBorder className="detail-content-card" padding="md">
+    <Paper className="detail-content-card" p="md">
       <Stack gap="md">
         {pr.url ? <Group><Button component="a" href={pr.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">GitHub</Button></Group> : null}
         <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
@@ -136,7 +139,7 @@ function PullRequestDetails({ pr }: { pr: PullRequestStatus }) {
           <DetailTile label="Repo path" value={pr.repo_path} />
         </SimpleGrid>
       </Stack>
-    </Card>
+    </Paper>
   );
 }
 
@@ -145,7 +148,7 @@ function DetailProperties({ detail }: { detail: SelectedDetail }) {
     const issue = detail.item;
     const prs = issuePullRequests(issue);
     return (
-      <Paper withBorder className="detail-properties" p="md">
+      <Paper className="detail-properties" p="md">
         <Stack gap="sm">
           <Text fw={800}>Properties</Text>
           <DetailTile label="Status" value={issue.status} />
@@ -167,7 +170,7 @@ function DetailProperties({ detail }: { detail: SelectedDetail }) {
   }
   const pr = detail.item;
   return (
-    <Paper withBorder className="detail-properties" p="md">
+    <Paper className="detail-properties" p="md">
       <Stack gap="sm">
         <Text fw={800}>Properties</Text>
         <DetailTile label="Status" value={pr.status} />
@@ -189,38 +192,47 @@ function DetailTile({ label, value, href, children }: {
   children?: React.ReactNode;
 }) {
   return (
-    <Paper withBorder p="sm">
+    <Box className="detail-tile">
       <Text c="dimmed" fw={700} size="xs" tt="uppercase">{label}</Text>
       {children ?? (value ? (
         href ? <ExternalLink href={href}>{value}</ExternalLink> : <Text className="truncate" size="sm">{value}</Text>
       ) : (
         <Text c="dimmed" size="sm">-</Text>
       ))}
-    </Paper>
+    </Box>
   );
 }
 
 function TaskDetails({ task }: { task: TaskLog }) {
   return (
-    <Card withBorder padding="sm">
-      <Stack gap="xs">
-        <Group gap="xs">
-          <Text fw={700}>{task.title}</Text>
-          <Badge color={task.type === "PR feedback" ? "violet" : "blue"} size="sm" variant="light">{task.type}</Badge>
+    <Box className="timeline-item">
+      <span className="timeline-dot" aria-hidden="true" />
+      <Stack className="timeline-content" gap="sm">
+        <Group align="flex-start" justify="space-between" gap="md" wrap="nowrap">
+          <Box miw={0}>
+            <Group gap="xs">
+              <Text fw={800}>{task.title}</Text>
+              <Badge color={task.type === "PR feedback" ? "violet" : "blue"} size="sm" variant="light">{task.type}</Badge>
+            </Group>
+            <Text c="dimmed" className="timeline-summary" size="sm">{task.headline || "No summary yet."}</Text>
+          </Box>
+          <Stack align="flex-end" gap={0} miw={92}>
+            <Text c="dimmed" size="xs">{new Date(task.modified * 1000).toLocaleTimeString()}</Text>
+            <Text c="dimmed" size="xs">{new Date(task.modified * 1000).toLocaleDateString()}</Text>
+          </Stack>
         </Group>
-        <Text c="dimmed" size="sm">{task.headline || "No summary yet."}</Text>
-        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
-          <MetricCard label="Changed files" value={task.file_count} detail="Across all stages" />
-          <MetricCard label="Tokens" value={formatCount(task.tokens_used)} detail="Across all stages" />
-          <MetricCard label="Updated" value={new Date(task.modified * 1000).toLocaleTimeString()} detail={new Date(task.modified * 1000).toLocaleDateString()} />
-        </SimpleGrid>
-        <Accordion variant="contained" multiple>
+        <Group className="timeline-stats" gap="lg">
+          <Text c="dimmed" size="xs"><strong>{task.file_count}</strong> files</Text>
+          <Text c="dimmed" size="xs"><strong>{formatCount(task.tokens_used)}</strong> tokens</Text>
+          <Text c="dimmed" size="xs"><strong>{task.log_count}</strong> logs</Text>
+        </Group>
+        <Accordion className="timeline-stages" variant="separated" multiple>
           {task.stages.map((stage) => (
             <StageLogPanel key={stage.name} log={stage} />
           ))}
         </Accordion>
       </Stack>
-    </Card>
+    </Box>
   );
 }
 

@@ -644,8 +644,22 @@ body {
 
 .detail-title-panel,
 .detail-content-card,
-.detail-properties {
-  background: color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-8));
+.detail-empty-state {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 42%, transparent);
+  border-radius: 8px;
+}
+
+.detail-title-panel {
+  background: transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 58%, transparent);
+  border-radius: 0;
+  padding-inline: 0 !important;
+}
+
+.detail-content-card {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 48%, transparent);
+  border-radius: 8px;
 }
 
 .detail-key {
@@ -660,8 +674,85 @@ body {
 
 .detail-properties {
   align-self: start;
+  background: transparent;
+  border-left: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 64%, transparent);
+  border-radius: 0;
   position: sticky;
   top: 0;
+}
+
+.detail-tile {
+  border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 44%, transparent);
+  padding: 8px 0 10px;
+}
+
+.detail-tile:last-child {
+  border-bottom: 0;
+}
+
+.timeline-heading {
+  border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 58%, transparent);
+  padding-bottom: 8px;
+}
+
+.task-timeline {
+  margin-left: 8px;
+  position: relative;
+}
+
+.task-timeline::before {
+  background: color-mix(in srgb, var(--mantine-color-default-border) 72%, transparent);
+  bottom: 14px;
+  content: "";
+  left: 8px;
+  position: absolute;
+  top: 14px;
+  width: 1px;
+}
+
+.timeline-item {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 17px minmax(0, 1fr);
+  padding: 0 0 18px;
+  position: relative;
+}
+
+.timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.timeline-dot {
+  background: var(--mantine-color-blue-4);
+  border: 3px solid var(--mantine-color-body);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-blue-4) 72%, transparent);
+  height: 11px;
+  margin-left: 3px;
+  margin-top: 10px;
+  width: 11px;
+  z-index: 1;
+}
+
+.timeline-content {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 42%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 42%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+}
+
+.timeline-summary {
+  margin-top: 2px;
+}
+
+.timeline-stats strong {
+  color: var(--mantine-color-text);
+}
+
+.timeline-stages [class*="mantine-Accordion-item"] {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--mantine-color-default-border) 44%, transparent);
+  border-radius: 6px;
 }
 
 @media (max-width: 1150px) {
@@ -705,6 +796,7 @@ body {
   }
 
   .detail-properties {
+    border-left: 0;
     position: static;
   }
 }
