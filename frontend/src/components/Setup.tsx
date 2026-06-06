@@ -533,9 +533,12 @@ function mergeDetectedRepos(
   existing: RepoDraft[],
   detected: BrowseRepository[]
 ): RepoDraft[] {
-  const usedKeys = new Set(existing.map((repo) => repo.key));
+  const existingRepos = detected.length
+    ? existing.filter((repo) => !isEmptyRepoDraft(repo))
+    : existing;
+  const usedKeys = new Set(existingRepos.map((repo) => repo.key).filter(Boolean));
   const detectedByPath = new Map(detected.map((repo) => [repo.path, repo]));
-  const next = existing.map((repo) => {
+  const next = existingRepos.map((repo) => {
     const detectedRepo = detectedByPath.get(repo.path);
     return detectedRepo ? {
       ...repo,
@@ -544,7 +547,7 @@ function mergeDetectedRepos(
       branches: detectedRepo.branches?.length ? detectedRepo.branches : repo.branches,
     } : repo;
   });
-  const existingPaths = new Set(existing.map((repo) => repo.path));
+  const existingPaths = new Set(existingRepos.map((repo) => repo.path));
   for (const repo of detected) {
     if (existingPaths.has(repo.path)) {
       continue;
@@ -562,6 +565,10 @@ function mergeDetectedRepos(
     existingPaths.add(repo.path);
   }
   return next;
+}
+
+function isEmptyRepoDraft(repo: RepoDraft) {
+  return !repo.key.trim() && !repo.github.trim() && !repo.path.trim();
 }
 
 function branchSelectOptions(repo: RepoDraft) {
