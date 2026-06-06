@@ -78,7 +78,7 @@ export function SetupView(props: {
     error: null
   });
   const [pickerTarget, setPickerTarget] = React.useState<FolderPickerTarget | null>(null);
-  const [workspacePendingRemoval, setWorkspacePendingRemoval] = React.useState<WorkspaceDraft | null>(null);
+  const [workspaceRemovalTarget, setWorkspaceRemovalTarget] = React.useState<WorkspaceDraft | null>(null);
   const hydratedRef = React.useRef(false);
   const lastSavedPayloadRef = React.useRef("");
 
@@ -182,11 +182,11 @@ export function SetupView(props: {
   ]);
 
   const removeWorkspace = () => {
-    if (!workspacePendingRemoval) {
+    if (!workspaceRemovalTarget) {
       return;
     }
-    setWorkspaces((current) => current.filter((item) => item.id !== workspacePendingRemoval.id));
-    setWorkspacePendingRemoval(null);
+    setWorkspaces((current) => current.filter((item) => item.id !== workspaceRemovalTarget.id));
+    setWorkspaceRemovalTarget(null);
   };
 
   const pageTitle = props.section === "workspaces" ? "Workspaces" : "Orchestrator";
@@ -232,7 +232,7 @@ export function SetupView(props: {
                     teamLookup={teamLookup}
                     workspace={workspace}
                     onChange={(next) => setWorkspaces((current) => current.map((item) => item.id === next.id ? next : item))}
-                    onRemove={() => setWorkspacePendingRemoval(workspace)}
+                    onRemove={() => setWorkspaceRemovalTarget(workspace)}
                   />
                 ))}
               </Stack>
@@ -334,9 +334,9 @@ export function SetupView(props: {
       )}
 
       <WorkspaceRemovalModal
-        onClose={() => setWorkspacePendingRemoval(null)}
+        onClose={() => setWorkspaceRemovalTarget(null)}
         onConfirm={removeWorkspace}
-        workspace={workspacePendingRemoval}
+        workspace={workspaceRemovalTarget}
       />
       <FolderPickerModal target={pickerTarget} onClose={() => setPickerTarget(null)} />
     </Stack>
