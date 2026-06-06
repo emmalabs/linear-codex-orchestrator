@@ -850,17 +850,44 @@ body {
   grid-template-columns: 17px minmax(0, 1fr);
   padding: 0 0 18px;
   position: relative;
+  --stage-color: var(--mantine-color-blue-4);
+  --stage-bg: color-mix(in srgb, var(--stage-color) 12%, transparent);
+  --stage-border: color-mix(in srgb, var(--mantine-color-default-border) 44%, transparent);
 }
 
 .timeline-item:last-child {
   padding-bottom: 0;
 }
 
+.timeline-item-plan {
+  --stage-color: var(--mantine-color-cyan-4);
+}
+
+.timeline-item-build {
+  --stage-color: var(--mantine-color-blue-4);
+}
+
+.timeline-item-improve {
+  --stage-color: var(--mantine-color-violet-4);
+}
+
+.timeline-item-review {
+  --stage-color: var(--mantine-color-green-4);
+}
+
+.timeline-item-feedback {
+  --stage-color: var(--mantine-color-orange-4);
+}
+
+.timeline-item-neutral {
+  --stage-color: var(--mantine-color-gray-5);
+}
+
 .timeline-dot {
-  background: var(--mantine-color-blue-4);
+  background: var(--stage-color);
   border: 3px solid var(--mantine-color-body);
   border-radius: 999px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-blue-4) 72%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--stage-color) 72%, transparent);
   height: 11px;
   margin-left: 3px;
   margin-top: 10px;
@@ -878,8 +905,14 @@ body {
 
 .timeline-stage-toggle [class*="mantine-Accordion-item"] {
   background: color-mix(in srgb, var(--mantine-color-dark-7) 42%, transparent);
-  border-color: color-mix(in srgb, var(--mantine-color-default-border) 44%, transparent);
+  border-color: var(--stage-border);
   border-radius: 6px;
+}
+
+.timeline-stage-badge {
+  background: var(--stage-bg);
+  color: var(--stage-color);
+  flex: 0 0 auto;
 }
 
 .timeline-stage-toggle [class*="mantine-Accordion-chevron"] {

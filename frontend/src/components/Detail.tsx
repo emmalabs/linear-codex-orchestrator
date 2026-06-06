@@ -321,16 +321,23 @@ function TaskDetails({ task }: { task: TaskLog }) {
 }
 
 function StageTimelineItem({ log }: { log: StageLog }) {
+  const tone = stageTone(log.name);
+  const label = stageToneLabel(tone);
   return (
-    <Box className="timeline-item">
-      <span className="timeline-dot" aria-hidden="true" />
-      <Accordion className="timeline-stage-toggle" variant="separated">
+    <Box className={`timeline-item timeline-item-${tone}`}>
+      <span className={`timeline-dot timeline-dot-${tone}`} aria-hidden="true" />
+      <Accordion className={`timeline-stage-toggle timeline-stage-toggle-${tone}`} variant="separated">
         <Accordion.Item value={log.name}>
           <Accordion.Control>
             <Stack gap="xs">
               <Group justify="space-between" wrap="nowrap">
                 <Box miw={0}>
-                  <Text fw={700} size="sm">{stageName(log.name)}</Text>
+                  <Group gap="xs" wrap="nowrap">
+                    <Text fw={700} size="sm">{stageName(log.name)}</Text>
+                    <Badge className={`timeline-stage-badge timeline-stage-badge-${tone}`} size="xs" variant="light">
+                      {label}
+                    </Badge>
+                  </Group>
                   <Text c="dimmed" className="truncate" size="xs">
                     {log.summary?.headline || "No processed summary."}
                   </Text>
@@ -362,6 +369,38 @@ function StageTimelineItem({ log }: { log: StageLog }) {
       </Accordion>
     </Box>
   );
+}
+
+type StageTone = "plan" | "build" | "improve" | "review" | "feedback" | "neutral";
+
+function stageTone(name: string): StageTone {
+  if (/planner|planning/i.test(name)) {
+    return "plan";
+  }
+  if (/implementation|implement/i.test(name)) {
+    return "build";
+  }
+  if (/optimization|optimiz/i.test(name)) {
+    return "improve";
+  }
+  if (/review-fix|pr-feedback|feedback/i.test(name)) {
+    return "feedback";
+  }
+  if (/review/i.test(name)) {
+    return "review";
+  }
+  return "neutral";
+}
+
+function stageToneLabel(tone: StageTone) {
+  return {
+    plan: "Plan",
+    build: "Build",
+    improve: "Improve",
+    review: "Review",
+    feedback: "Feedback",
+    neutral: "Stage"
+  }[tone];
 }
 
 function LogMessage({ message }: { message?: string }) {
