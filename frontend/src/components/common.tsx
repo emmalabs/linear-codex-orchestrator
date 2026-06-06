@@ -1,0 +1,41 @@
+import * as React from "react";
+import { Anchor, Badge, Card, Stack, Text } from "@mantine/core";
+
+export function MetricCard(props: { label: string; value: string | number; detail: string }) {
+  return (
+    <Card withBorder padding="sm">
+      <Text c="dimmed" fw={700} size="xs" tt="uppercase">{props.label}</Text>
+      <Text fw={750} size="xl" lh={1.2}>{props.value}</Text>
+      <Text c="dimmed" className="truncate" size="sm">{props.detail}</Text>
+    </Card>
+  );
+}
+
+export function StatusPill({ status }: { status?: string }) {
+  return <Badge color="gray" radius="xl" size="sm" variant="outline">{status || "Unknown"}</Badge>;
+}
+
+export function SummaryList(props: { emptyText: string; children: React.ReactNode }) {
+  const children = React.Children.toArray(props.children);
+  if (!children.length) {
+    return <Text c="dimmed" p="sm" size="sm">{props.emptyText}</Text>;
+  }
+  return <Stack gap={0}>{children}</Stack>;
+}
+
+export function ExternalLink({ href, children }: { href?: string; children: React.ReactNode }) {
+  if (!href) {
+    return <span>{children}</span>;
+  }
+  return (
+    <Anchor
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      fw={700}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {children}
+    </Anchor>
+  );
+}

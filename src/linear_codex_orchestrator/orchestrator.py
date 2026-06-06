@@ -55,6 +55,20 @@ class Orchestrator:
         await self.linear.close()
         await self.github.close()
 
+    async def reload_settings(self) -> None:
+        next_settings = Settings.from_env()
+        if next_settings == self.settings:
+            return
+        old_settings = self.settings
+        self.settings = next_settings
+        if linear_client_settings_changed(old_settings, next_settings):
+            await self.linear.close()
+            self.linear = self._linear_client()
+        if github_client_settings_changed(old_settings, next_settings):
+            await self.github.close()
+            self.github = LocalGitHubClient(dry_run=next_settings.dry_run)
+        log("Config hot-reloaded; changes are active for the next tick")
+
     async def run_once(self) -> None:
         await self.run_pr_feedback_once()
         log("Polling Linear for resumable running issues")
@@ -94,6 +108,8 @@ class Orchestrator:
         log(f"Daemon started; polling every {interval_seconds}s after each completed tick")
         while True:
             try:
+                if self.settings.hot_reload_config:
+                    await self.reload_settings()
                 await self.run_once()
             except Exception as exc:
                 log(f"Tick failed; daemon will continue: {exc}")
@@ -176,7 +192,7 @@ class Orchestrator:
             return self.settings.workspace_map[normalized_key]
         except KeyError as exc:
             raise RuntimeError(
-                f"No WORKSPACE_MAP_JSON entry for Linear team key {issue.team_key}."
+                f"No configured workspace entry for Linear team key {issue.team_key}."
             ) from exc
 
     async def _process_locked_issue(self, issue: LinearIssue, workspace: WorkspaceConfig, resume: bool = False) -> None:
@@ -954,6 +970,20 @@ def codex_log_path(identifier: str, stage: str) -> Path:
 def pr_feedback_state(lock_dir: Path, repo: str, number: int) -> Path:
     safe_repo = repo.replace("/", "__")
     return lock_dir / "pr-feedback-state" / f"{safe_repo}-{number}.json"
+
+
+def linear_client_settings_changed(old: Settings, new: Settings) -> bool:
+    return (
+        old.linear_api_key != new.linear_api_key
+        or old.dry_run != new.dry_run
+        or old.codex_model != new.codex_model
+        or old.codex_reasoning_effort != new.codex_reasoning_effort
+        or old.codex_fast_mode != new.codex_fast_mode
+    )
+
+
+def github_client_settings_changed(old: Settings, new: Settings) -> bool:
+    return old.dry_run != new.dry_run
 
 
 def read_processed_feedback(path: Path) -> set[str]:

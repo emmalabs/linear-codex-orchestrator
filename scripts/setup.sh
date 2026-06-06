@@ -158,15 +158,8 @@ if [ -f frontend/package.json ]; then
   npm --prefix frontend run build
 fi
 
-if [ ! -f .env ]; then
-  cp .env.example .env
-  echo "Created .env from .env.example. Check REPO_MAP_JSON before running."
-else
-  echo ".env already exists; left it unchanged."
-fi
-
 check_auth
 
 echo
-echo "Setup complete. No venv or .env API keys are required."
+echo "Setup complete. Run ./scripts/run.sh, then open http://127.0.0.1:8765 and use the Setup tab."
 echo "Run: ./scripts/run.sh"

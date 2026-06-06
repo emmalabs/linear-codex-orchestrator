@@ -46,6 +46,8 @@ async def async_main() -> None:
             await orchestrator.run_forever(args.interval_seconds)
         elif args.mode == "pr-comments-daemon":
             while True:
+                if orchestrator.settings.hot_reload_config:
+                    await orchestrator.reload_settings()
                 await orchestrator.run_pr_feedback_once()
                 await asyncio.sleep(args.interval_seconds)
         elif args.mode == "pr-comments-once":

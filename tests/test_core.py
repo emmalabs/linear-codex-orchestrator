@@ -9,7 +9,13 @@ from unittest.mock import patch
 
 from linear_codex_orchestrator.codex_cli import _run_process_hidden, build_codex_command, parse_json_object
 from linear_codex_orchestrator.config import Settings
-from linear_codex_orchestrator.config import RepoConfig, WorkspaceConfig, validate_workspace_map
+from linear_codex_orchestrator.config import (
+    RepoConfig,
+    WorkspaceConfig,
+    read_config_file,
+    validate_workspace_map,
+    write_config_file,
+)
 from linear_codex_orchestrator.git_ops import branch_name, has_commits_since_base, run_git
 from linear_codex_orchestrator.local_github_client import pull_request_number_from_url
 from linear_codex_orchestrator.linear_api_client import (
@@ -44,6 +50,8 @@ from linear_codex_orchestrator.models import OpenPullRequest, PullRequestFeedbac
 from linear_codex_orchestrator.locks import lock_for_repo
 from linear_codex_orchestrator.prompt_templates import render_prompt
 from linear_codex_orchestrator.web_server import (
+    browse_index,
+    github_repo_index,
     render_missing_frontend,
     log_index,
     safe_frontend_path,
@@ -53,6 +61,7 @@ from linear_codex_orchestrator.web_server import (
     task_from_log_name,
     task_index,
     tail_text,
+    config_index,
 )
 
 
@@ -93,10 +102,12 @@ class CoreTests(unittest.TestCase):
             "LINEAR_API_KEY": "lin_api_test",
         }
         with patch.dict(os.environ, env, clear=True):
-            with patch("linear_codex_orchestrator.config.validate_workspace_map"):
-                settings = Settings.from_env()
+            with patch("linear_codex_orchestrator.config.read_config_file", return_value={}):
+                with patch("linear_codex_orchestrator.config.validate_workspace_map"):
+                    settings = Settings.from_env()
         self.assertFalse(settings.dry_run)
         self.assertFalse(settings.codex_fast_mode)
+        self.assertTrue(settings.hot_reload_config)
         self.assertEqual(settings.linear_api_key, "lin_api_test")
         self.assertEqual(settings.pr_feedback_branch_prefix, "codex/")
         self.assertEqual(settings.workspace_map["ENG"].path, Path("/tmp/workspace"))
@@ -112,8 +123,9 @@ class CoreTests(unittest.TestCase):
             ),
         }
         with patch.dict(os.environ, env, clear=True):
-            with patch("linear_codex_orchestrator.config.validate_workspace_map"):
-                settings = Settings.from_env()
+            with patch("linear_codex_orchestrator.config.read_config_file", return_value={}):
+                with patch("linear_codex_orchestrator.config.validate_workspace_map"):
+                    settings = Settings.from_env()
         self.assertFalse(settings.dry_run)
 
     def test_settings_from_env_parses_example_workspace(self) -> None:
@@ -125,9 +137,44 @@ class CoreTests(unittest.TestCase):
             ),
         }
         with patch.dict(os.environ, env, clear=True):
-            with patch("linear_codex_orchestrator.config.validate_workspace_map"):
-                settings = Settings.from_env()
+            with patch("linear_codex_orchestrator.config.read_config_file", return_value={}):
+                with patch("linear_codex_orchestrator.config.validate_workspace_map"):
+                    settings = Settings.from_env()
         self.assertEqual(settings.workspace_map["ENG"].repos["api"].github, "example/product-api")
+
+    def test_settings_reads_sqlite_config_before_env(self) -> None:
+        env = {
+            "WORKSPACE_MAP_JSON": (
+                '{"ENG":{"path":"/tmp/env-workspace","repos":'
+                '{"web":{"github":"acme/env","path":"/tmp/env-web"}}}}'
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workspace = tmp_path / "app-workspace"
+            repo = workspace / "api"
+            repo.mkdir(parents=True)
+            (repo / ".git").mkdir()
+            config_path = tmp_path / "config.db"
+            write_config_file(
+                {
+                    "workspace_map": {
+                        "APP": {
+                            "path": str(workspace),
+                            "repos": {"api": {"github": "acme/api", "path": str(repo), "base": "develop"}},
+                        }
+                    },
+                    "dry_run": True,
+                },
+                config_path,
+            )
+            self.assertEqual(read_config_file(config_path)["dry_run"], True)
+            with patch.dict(os.environ, {**env, "ORCHESTRATOR_CONFIG_PATH": str(config_path)}, clear=True):
+                with patch("linear_codex_orchestrator.config.validate_workspace_map"):
+                    settings = Settings.from_env()
+        self.assertTrue(settings.dry_run)
+        self.assertIn("APP", settings.workspace_map)
+        self.assertEqual(settings.workspace_map["APP"].repos["api"].github, "acme/api")
 
     def test_orchestrator_uses_linear_api_when_key_is_configured(self) -> None:
         settings = Settings(workspace_map={}, linear_api_key="lin_api_test")
@@ -518,6 +565,72 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summary["prs"][0]["key"], "acme/web#1")
         self.assertEqual(summary["prs"][0]["repo_path"], "/tmp/workspace/web")
 
+    def test_web_config_index_reads_sqlite_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workspace = tmp_path / "workspace"
+            repo = workspace / "web"
+            repo.mkdir(parents=True)
+            (repo / ".git").mkdir()
+            config_path = tmp_path / "config.db"
+            write_config_file(
+                {
+                    "workspace_map": {
+                        "ENG": {
+                            "path": str(workspace),
+                            "repos": {"web": {"github": "acme/web", "path": str(repo)}},
+                        }
+                    }
+                },
+                config_path,
+            )
+            with patch.dict(os.environ, {"ORCHESTRATOR_CONFIG_PATH": str(config_path)}):
+                with patch("linear_codex_orchestrator.config.validate_workspace_map"):
+                    summary = config_index()
+        self.assertTrue(summary["exists"])
+        self.assertEqual(summary["config"]["workspace_map"]["ENG"]["repos"]["web"]["github"], "acme/web")
+
+    def test_web_browse_index_lists_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "repo").mkdir()
+            (tmp_path / "file.txt").write_text("ignored", encoding="utf-8")
+            summary = browse_index(str(tmp_path))
+        self.assertEqual(summary["path"], str(tmp_path.resolve()))
+        self.assertEqual(summary["directories"], [{"name": "repo", "path": str((tmp_path / "repo").resolve())}])
+
+    def test_web_browse_index_detects_child_git_repositories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            repo_path = tmp_path / "product-api"
+            repo_path.mkdir()
+            run_git(repo_path, "init")
+            run_git(repo_path, "checkout", "-b", "develop")
+            run_git(repo_path, "remote", "add", "origin", "git@github.com:acme/product-api.git")
+            summary = browse_index(str(tmp_path))
+        self.assertEqual(
+            summary["repositories"],
+            [{
+                "key": "product-api",
+                "path": str(repo_path.resolve()),
+                "github": "acme/product-api",
+                "base": "develop",
+            }],
+        )
+
+    def test_github_repo_index_parses_accessible_repos(self) -> None:
+        completed = type("Completed", (), {
+            "stdout": (
+                '{"nameWithOwner":"acme/api","permission":"WRITE"}\n'
+                '{"nameWithOwner":"acme/web","permission":"READ"}\n'
+            )
+        })()
+        with patch("linear_codex_orchestrator.web_server.subprocess.run", return_value=completed):
+            summary = github_repo_index()
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["repos"][0]["nameWithOwner"], "acme/api")
+        self.assertEqual(summary["repos"][1]["permission"], "READ")
+
     def test_tail_text_limits_large_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "large.log"
@@ -685,6 +798,29 @@ class CoreTests(unittest.TestCase):
         )
         orchestrator = Orchestrator(Settings(workspace_map={}))
         asyncio.run(orchestrator.process_issue(issue))
+
+    def test_reload_settings_updates_runtime_clients(self) -> None:
+        class FakeClient:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        old_linear = FakeClient()
+        old_github = FakeClient()
+        old_settings = Settings(workspace_map={}, dry_run=False)
+        new_settings = Settings(workspace_map={}, dry_run=True)
+        orchestrator = Orchestrator(old_settings, linear=old_linear, github=old_github)
+        with patch("linear_codex_orchestrator.orchestrator.Settings.from_env", return_value=new_settings):
+            with patch("linear_codex_orchestrator.orchestrator.LocalGitHubClient", FakeClient):
+                with patch("linear_codex_orchestrator.orchestrator.LocalLinearClient", FakeClient):
+                    asyncio.run(orchestrator.reload_settings())
+
+        self.assertEqual(orchestrator.settings, new_settings)
+        self.assertTrue(old_linear.closed)
+        self.assertTrue(old_github.closed)
+        self.assertIsInstance(orchestrator.github, FakeClient)
 
     def test_run_once_resumes_running_issues_before_ready_issues(self) -> None:
         issue = parse_linear_issue(

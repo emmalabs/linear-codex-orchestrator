@@ -3,11 +3,19 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
+from .config import (
+    config_payload_from_env,
+    config_path,
+    normalize_config_payload,
+    read_config_file,
+    write_config_file,
+)
 from .log_summary import read_or_create_log_summary
 
 
@@ -43,9 +51,19 @@ class LogRequestHandler(BaseHTTPRequestHandler):
     server_version = "LinearCodexLogUI/1.0"
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/":
             self._send_frontend_index()
+            return
+        if path == "/api/browse":
+            self._send_json(browse_index(parse_qs(parsed.query).get("path", [""])[0]))
+            return
+        if path == "/api/config":
+            self._send_json(config_index())
+            return
+        if path == "/api/github/repos":
+            self._send_json(github_repo_index())
             return
         if path == "/api/logs":
             self._send_json(log_index())
@@ -63,6 +81,13 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self._send_log(path.removeprefix("/logs/"))
             return
         if self._send_frontend_asset(path):
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/api/config":
+            self._write_config()
             return
         self.send_error(404)
 
@@ -103,6 +128,30 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _send_error_json(self, status: int, message: str) -> None:
+        payload = json.dumps({"ok": False, "error": message}, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _write_config(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 1024 * 1024:
+                self._send_error_json(413, "Config payload is too large.")
+                return
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Config payload must be a JSON object.")
+            normalized = normalize_config_payload(payload)
+            write_config_file(normalized)
+        except (json.JSONDecodeError, KeyError, RuntimeError, ValueError) as exc:
+            self._send_error_json(400, str(exc))
+            return
+        self._send_json({"ok": True, "config": config_index()})
+
     def _send_log(self, raw_name: str) -> None:
         try:
             log_path = safe_log_path(raw_name)
@@ -121,6 +170,165 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+
+def config_index() -> dict[str, object]:
+    path = config_path()
+    config = read_config_file(path)
+    source = "sqlite"
+    if not config:
+        config = config_payload_from_env()
+        source = "environment" if config else "defaults"
+    return {
+        "path": str(path),
+        "exists": path.is_file(),
+        "source": source,
+        "config": config,
+    }
+
+
+def browse_index(raw_path: str) -> dict[str, object]:
+    current = Path(raw_path).expanduser() if raw_path else Path.home()
+    if not current.exists() or not current.is_dir():
+        current = current.parent if current.parent.exists() else Path.home()
+    current = current.resolve()
+    directories: list[dict[str, str]] = []
+    repositories: list[dict[str, object]] = []
+    try:
+        for child in sorted(current.iterdir(), key=lambda item: item.name.lower()):
+            if child.is_dir():
+                directories.append({"name": child.name, "path": str(child)})
+                if (child / ".git").exists():
+                    repositories.append(repo_info(child))
+    except OSError:
+        directories = []
+    return {
+        "path": str(current),
+        "parent": str(current.parent) if current.parent != current else None,
+        "directories": directories,
+        "current_repository": repo_info(current) if (current / ".git").exists() else None,
+        "repositories": repositories,
+    }
+
+
+def repo_info(path: Path) -> dict[str, object]:
+    info = {
+        "key": repo_key_from_path(path),
+        "path": str(path.resolve()),
+        "github": github_repo_from_remote(path),
+        "base": git_default_branch(path),
+    }
+    branches = git_branches(path)
+    if branches:
+        info["branches"] = branches
+    return info
+
+
+def repo_key_from_path(path: Path) -> str:
+    name = path.name
+    if name.endswith(".git"):
+        name = name[:-4]
+    return re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-").lower() or "repo"
+
+
+def github_repo_from_remote(path: Path) -> str | None:
+    try:
+        remote = subprocess.run(
+            ["git", "-C", str(path), "remote", "get-url", "origin"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    patterns = (
+        r"github\.com[:/](?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?$",
+        r"^https?://[^/]+/(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, remote)
+        if match:
+            return match.group("repo")
+    return None
+
+
+def git_default_branch(path: Path) -> str:
+    commands = (
+        ["git", "-C", str(path), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        ["git", "-C", str(path), "branch", "--show-current"],
+    )
+    for command in commands:
+        try:
+            value = subprocess.run(
+                command,
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            continue
+        if value:
+            return value.removeprefix("origin/")
+    return "main"
+
+
+def git_branches(path: Path) -> list[str]:
+    try:
+        output = subprocess.run(
+            ["git", "-C", str(path), "branch", "--all", "--format=%(refname:short)"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return []
+    branches: list[str] = []
+    for line in output.splitlines():
+        branch = line.strip().removeprefix("remotes/")
+        if branch.endswith("/HEAD"):
+            continue
+        branch = branch.removeprefix("origin/")
+        if branch and branch not in branches:
+            branches.append(branch)
+    return branches
+
+
+def github_repo_index() -> dict[str, object]:
+    command = [
+        "gh",
+        "api",
+        "--paginate",
+        "/user/repos?per_page=100&type=all&sort=full_name",
+        "--jq",
+        (
+            '.[] | {nameWithOwner:.full_name, permission:'
+            '(if .permissions.admin then "ADMIN" '
+            'elif .permissions.push then "WRITE" '
+            'elif .permissions.pull then "READ" else "UNKNOWN" end)}'
+        ),
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, check=True, text=True, timeout=15)
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": str(exc), "repos": []}
+    repos: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        try:
+            repo = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(repo, dict) and repo.get("nameWithOwner"):
+            repos.append(
+                {
+                    "nameWithOwner": str(repo["nameWithOwner"]),
+                    "permission": str(repo.get("permission") or "UNKNOWN"),
+                }
+            )
+    repos.sort(key=lambda item: item["nameWithOwner"].lower())
+    return {"ok": True, "repos": repos}
 
 
 def safe_log_path(raw_name: str) -> Path:
