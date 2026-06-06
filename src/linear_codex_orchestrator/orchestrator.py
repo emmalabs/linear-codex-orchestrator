@@ -250,11 +250,15 @@ class Orchestrator:
                 log(f"{issue.identifier}: resuming existing branch {branch}")
                 update_issue_status(issue, "Resuming branch")
                 self.checkout_existing_branch(workspace, branch)
-                plan = "Resume interrupted automation from the existing branch and working tree."
-                implementation_summary = "Resumed from existing repository changes after an interrupted previous run."
+                plan = resume_plan()
+                log(f"{issue.identifier}: resumed implementation started")
+                update_issue_status(issue, "Implementing")
+                implementation_summary = await self._implement(issue, workspace, issue_context, plan)
+                log(f"{issue.identifier}: resumed implementation finished; detecting changed repos")
                 changed_repos = self.changed_repos(workspace)
-                log(f"{issue.identifier}: changed repos on resume: {', '.join(changed_repos) or 'none'}")
-                update_issue_status(issue, "Resumed", changed_repos=", ".join(changed_repos) or "none")
+                log(f"{issue.identifier}: changed repos: {', '.join(changed_repos) or 'none'}")
+                update_issue_status(issue, "Implemented", changed_repos=", ".join(changed_repos) or "none")
+                await self._try_linear_comment(issue, implementation_comment(changed_repos, implementation_summary))
             else:
                 log(f"{issue.identifier}: posting start comment")
                 await self.linear.comment(issue.id, start_comment(issue, workspace, branch))
@@ -608,6 +612,18 @@ def implementation_prompt(issue: LinearIssue, workspace: WorkspaceConfig, issue_
         issue_context=issue_context,
         plan=plan,
     )
+
+
+def resume_plan() -> str:
+    return """
+Resume interrupted automation from the existing branch and working tree.
+
+Before editing, inspect the current branch, git status, and existing diffs.
+Treat any uncommitted files and branch commits as partial implementation work.
+Continue the implementation from that state instead of restarting, optimizing,
+or reviewing first. Preserve intentional existing changes unless the Linear
+issue requires adjusting them.
+""".strip()
 
 
 def review_prompt(
