@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Anchor, Badge, Card, Stack, Text } from "@mantine/core";
+import { statusTone } from "../lib/format";
 
 export function MetricCard(props: { label: string; value: string | number; detail: string }) {
   return (
@@ -12,7 +13,20 @@ export function MetricCard(props: { label: string; value: string | number; detai
 }
 
 export function StatusPill({ status }: { status?: string }) {
-  return <Badge color="gray" radius="xl" size="sm" variant="outline">{status || "Unknown"}</Badge>;
+  const tone = statusTone(status);
+  const color = tone === "success" ? "green" : tone === "error" ? "red" : tone === "active" ? "blue" : "gray";
+  return (
+    <Badge
+      className={`status-pill status-pill-${tone}`}
+      color={color}
+      radius="xl"
+      size="sm"
+      variant="light"
+    >
+      <span className="status-pill-dot" aria-hidden="true" />
+      {status || "Unknown"}
+    </Badge>
+  );
 }
 
 export function SummaryList(props: { emptyText: string; children: React.ReactNode }) {
