@@ -11,6 +11,8 @@ export type IssueStatus = {
   prs?: string;
   status?: string;
   updated_at?: string;
+  archived?: boolean;
+  archived_at?: string;
 };
 
 export type PullRequestStatus = {
@@ -26,6 +28,8 @@ export type PullRequestStatus = {
   feedback_count?: number;
   status?: string;
   updated_at?: string;
+  archived?: boolean;
+  archived_at?: string;
 };
 
 export type StageLogSummary = {
@@ -64,6 +68,8 @@ export type TaskLog = {
 export type DashboardData = {
   issues: IssueStatus[];
   prs: PullRequestStatus[];
+  archivedIssues: IssueStatus[];
+  archivedPrs: PullRequestStatus[];
   tasks: TaskLog[];
   orchestration: string;
   connected: boolean;
@@ -154,6 +160,8 @@ export type BrowseRepository = {
 export const emptyData: DashboardData = {
   issues: [],
   prs: [],
+  archivedIssues: [],
+  archivedPrs: [],
   tasks: [],
   orchestration: "",
   connected: false,

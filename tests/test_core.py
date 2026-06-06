@@ -454,7 +454,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(status["prs"]["acme/web#12"]["issue"], "ENG-1")
         self.assertEqual(status["prs"]["acme/web#12"]["repo_path"], "/tmp/workspace/web")
 
-    def test_archive_pr_status_removes_pr_from_status_file(self) -> None:
+    def test_archive_pr_status_marks_pr_archived(self) -> None:
         pr = OpenPullRequest("acme/web", 12, "https://github.com/acme/web/pull/12", "Fix", "branch", "main")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "status.json"
@@ -463,7 +463,8 @@ class CoreTests(unittest.TestCase):
                 self.assertTrue(archive_pr_status(pr))
                 self.assertFalse(archive_pr_status(pr))
                 status = read_status()
-        self.assertEqual(status["prs"], {})
+        self.assertTrue(status["prs"]["acme/web#12"]["archived"])
+        self.assertIn("archived_at", status["prs"]["acme/web#12"])
 
     def test_web_log_index_and_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -609,7 +610,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summary["prs"][0]["key"], "acme/web#1")
         self.assertEqual(summary["prs"][0]["repo_path"], "/tmp/workspace/web")
 
-    def test_archive_status_item_removes_status_entries(self) -> None:
+    def test_archive_status_item_moves_status_entries_to_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
@@ -624,6 +625,8 @@ class CoreTests(unittest.TestCase):
                 summary = status_index()
         self.assertEqual(summary["issues"], [])
         self.assertEqual(summary["prs"], [])
+        self.assertEqual(summary["archived_issues"][0]["identifier"], "ENG-1")
+        self.assertEqual(summary["archived_prs"][0]["key"], "acme/web#1")
 
     def test_update_status_item_changes_status_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1021,11 +1024,13 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "status.json"
             with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
-                update_pr_status(merged_pr, "Ready for review")
-                asyncio.run(orchestrator.run_pr_feedback_once())
-                status = read_status()
+                with patch("linear_codex_orchestrator.web_server.LOG_DIR", Path(tmp)):
+                    update_pr_status(merged_pr, "Ready for review")
+                    asyncio.run(orchestrator.run_pr_feedback_once())
+                    summary = status_index()
 
-        self.assertEqual(status["prs"], {})
+        self.assertEqual(summary["prs"], [])
+        self.assertEqual(summary["archived_prs"][0]["key"], "acme/web#12")
 
     def test_run_once_resumes_interrupted_in_progress_issue_with_existing_branch(self) -> None:
         issue = parse_linear_issue(

@@ -78,6 +78,8 @@ export function App() {
         const status = await statusResponse.json() as {
           issues?: IssueStatus[];
           prs?: PullRequestStatus[];
+          archived_issues?: IssueStatus[];
+          archived_prs?: PullRequestStatus[];
         };
         if (cancelled) {
           return;
@@ -85,6 +87,8 @@ export function App() {
         setData({
           issues: status.issues ?? [],
           prs: status.prs ?? [],
+          archivedIssues: status.archived_issues ?? [],
+          archivedPrs: status.archived_prs ?? [],
           tasks,
           orchestration: orchestration.text ?? "",
           connected: true,
@@ -176,12 +180,16 @@ export function App() {
       status?: {
         issues?: IssueStatus[];
         prs?: PullRequestStatus[];
+        archived_issues?: IssueStatus[];
+        archived_prs?: PullRequestStatus[];
       };
     };
     setData((current) => ({
       ...current,
       issues: payload.status?.issues ?? current.issues.filter((issue) => issue.identifier !== key),
-      prs: payload.status?.prs ?? current.prs.filter((pr) => pr.key !== key)
+      prs: payload.status?.prs ?? current.prs.filter((pr) => pr.key !== key),
+      archivedIssues: payload.status?.archived_issues ?? current.archivedIssues,
+      archivedPrs: payload.status?.archived_prs ?? current.archivedPrs
     }));
     if (route.detail?.kind === detail.kind && route.detail.key === key) {
       navigate({ section: route.section }, { replace: true });
@@ -206,12 +214,16 @@ export function App() {
       status?: {
         issues?: IssueStatus[];
         prs?: PullRequestStatus[];
+        archived_issues?: IssueStatus[];
+        archived_prs?: PullRequestStatus[];
       };
     };
     setData((current) => ({
       ...current,
       issues: payload.status?.issues ?? current.issues.map((issue) => issue.identifier === key ? { ...issue, status } : issue),
-      prs: payload.status?.prs ?? current.prs.map((pr) => pr.key === key ? { ...pr, status } : pr)
+      prs: payload.status?.prs ?? current.prs.map((pr) => pr.key === key ? { ...pr, status } : pr),
+      archivedIssues: payload.status?.archived_issues ?? current.archivedIssues,
+      archivedPrs: payload.status?.archived_prs ?? current.archivedPrs
     }));
   }, []);
 
@@ -420,10 +432,10 @@ function detailFromRoute(route: AppRoute, data: DashboardData): SelectedDetail |
     return null;
   }
   if (route.detail.kind === "issue") {
-    const issue = data.issues.find((item) => issueKey(item) === route.detail?.key);
+    const issue = [...data.issues, ...data.archivedIssues].find((item) => issueKey(item) === route.detail?.key);
     return issue ? { kind: "issue", item: issue } : null;
   }
-  const pr = data.prs.find((item) => prKey(item) === route.detail?.key);
+  const pr = [...data.prs, ...data.archivedPrs].find((item) => prKey(item) === route.detail?.key);
   return pr ? { kind: "pr", item: pr } : null;
 }
 

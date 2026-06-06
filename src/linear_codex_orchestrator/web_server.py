@@ -493,17 +493,13 @@ def status_index() -> dict[str, object]:
     payload = read_status_payload()
     issues = payload.get("issues", {})
     prs = payload.get("prs", {})
+    issue_values = list(issues.values()) if isinstance(issues, dict) else []
+    pr_values = list(prs.values()) if isinstance(prs, dict) else []
     return {
-        "issues": sorted(
-            issues.values() if isinstance(issues, dict) else [],
-            key=lambda item: str(item.get("updated_at", "")),
-            reverse=True,
-        ),
-        "prs": sorted(
-            prs.values() if isinstance(prs, dict) else [],
-            key=lambda item: str(item.get("updated_at", "")),
-            reverse=True,
-        ),
+        "issues": sorted_status_items(item for item in issue_values if not is_archived_status_item(item)),
+        "prs": sorted_status_items(item for item in pr_values if not is_archived_status_item(item)),
+        "archived_issues": sorted_status_items(item for item in issue_values if is_archived_status_item(item)),
+        "archived_prs": sorted_status_items(item for item in pr_values if is_archived_status_item(item)),
     }
 
 
@@ -514,8 +510,11 @@ def archive_status_item(kind: str, key: str) -> bool:
     if not isinstance(collection, dict):
         collection = {}
         payload[collection_key] = collection
-    existed = key in collection
-    collection.pop(key, None)
+    current = collection.get(key)
+    existed = isinstance(current, dict) and not current.get("archived")
+    if existed:
+        current["archived"] = True
+        current["archived_at"] = datetime.now().isoformat(timespec="seconds")
     write_status_payload(payload)
     return existed
 
@@ -534,6 +533,18 @@ def update_status_item(kind: str, key: str, status: str) -> bool:
     current["updated_at"] = datetime.now().isoformat(timespec="seconds")
     write_status_payload(payload)
     return True
+
+
+def sorted_status_items(items: object) -> list[object]:
+    return sorted(
+        items,
+        key=lambda item: str(item.get("archived_at") or item.get("updated_at", "")) if isinstance(item, dict) else "",
+        reverse=True,
+    )
+
+
+def is_archived_status_item(item: object) -> bool:
+    return isinstance(item, dict) and bool(item.get("archived"))
 
 
 def read_status_payload() -> dict[str, object]:

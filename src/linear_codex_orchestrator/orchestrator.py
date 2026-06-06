@@ -1196,8 +1196,11 @@ def archive_pr_status(pr: OpenPullRequest) -> bool:
     prs = payload["prs"]
     assert isinstance(prs, dict)
     key = f"{pr.repo}#{pr.number}"
-    existed = key in prs
-    prs.pop(key, None)
+    current = prs.get(key)
+    existed = isinstance(current, dict) and not current.get("archived")
+    if existed:
+        current["archived"] = True
+        current["archived_at"] = datetime.now().isoformat(timespec="seconds")
     write_status(payload)
     return existed
 

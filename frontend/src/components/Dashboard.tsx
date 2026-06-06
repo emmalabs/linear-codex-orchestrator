@@ -22,10 +22,10 @@ import { currentLiveActivity } from "../lib/tasks";
 import { StatusPill } from "./common";
 
 type FeedMode = "issues" | "prs";
-type FeedFilter = "All" | StatusGroup;
+type FeedFilter = "All" | StatusGroup | "Archived";
 
 const allWorkspaces = "__all__";
-const filterOrder: FeedFilter[] = ["All", "Active", "Needs attention", "Ready", "Done"];
+const filterOrder: FeedFilter[] = ["All", "Active", "Needs attention", "Ready", "Done", "Archived"];
 const groupOrder: StatusGroup[] = ["Active", "Needs attention", "Ready", "Done"];
 
 export function DashboardView(props: {
@@ -69,10 +69,19 @@ function FeedPanel(props: {
     [props.workspaceMap]
   );
   const items = React.useMemo(
-    () => props.mode === "issues"
-      ? props.data.issues.map((item) => issueFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail))
-      : props.data.prs.map((item) => prFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail)),
-    [props.data.issues, props.data.prs, props.mode, workspaceCatalog, props.onArchive, props.onSelectDetail]
+    () => {
+      if (props.mode === "issues") {
+        return [
+          ...props.data.issues.map((item) => issueFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail)),
+          ...props.data.archivedIssues.map((item) => issueFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail))
+        ];
+      }
+      return [
+        ...props.data.prs.map((item) => prFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail)),
+        ...props.data.archivedPrs.map((item) => prFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail))
+      ];
+    },
+    [props.data.archivedIssues, props.data.archivedPrs, props.data.issues, props.data.prs, props.mode, workspaceCatalog, props.onArchive, props.onSelectDetail]
   );
   const workspaceOptions = React.useMemo(
     () => workspaceOptionsFromItems(items),
@@ -89,9 +98,17 @@ function FeedPanel(props: {
       : items.filter((item) => item.workspace.value === workspaceFilter),
     [items, workspaceFilter]
   );
+  const activeItems = React.useMemo(
+    () => filteredItems.filter((item) => !item.archived),
+    [filteredItems]
+  );
+  const archivedItems = React.useMemo(
+    () => filteredItems.filter((item) => item.archived),
+    [filteredItems]
+  );
   const grouped = React.useMemo(() => {
     const buckets = new Map<StatusGroup, FeedItem[]>();
-    for (const item of filteredItems) {
+    for (const item of activeItems) {
       const group = statusGroup(item.status);
       if (!buckets.has(group)) {
         buckets.set(group, []);
@@ -102,17 +119,22 @@ function FeedPanel(props: {
       bucket.sort((left, right) => timestamp(right.updatedAt) - timestamp(left.updatedAt));
     }
     return buckets;
-  }, [filteredItems]);
+  }, [activeItems]);
   const counts = React.useMemo(() => {
-    const values = new Map<FeedFilter, number>([["All", filteredItems.length]]);
+    const values = new Map<FeedFilter, number>([
+      ["All", activeItems.length],
+      ["Archived", archivedItems.length]
+    ]);
     for (const group of groupOrder) {
       values.set(group, grouped.get(group)?.length ?? 0);
     }
     return values;
-  }, [filteredItems.length, grouped]);
-  const visibleGroups = groupOrder
-    .map((group) => ({ group, items: grouped.get(group) ?? [] }))
-    .filter((entry) => filter === "All" ? entry.items.length : entry.group === filter);
+  }, [activeItems.length, archivedItems.length, grouped]);
+  const visibleGroups = filter === "Archived"
+    ? [{ group: "Archived", items: archivedItems }]
+    : groupOrder
+      .map((group) => ({ group, items: grouped.get(group) ?? [] }))
+      .filter((entry) => filter === "All" ? entry.items.length : entry.group === filter);
 
   return (
     <Paper withBorder className="feed-panel">
@@ -191,6 +213,7 @@ type FeedItem = {
   meta: string[];
   tone: StatusTone;
   workspace: WorkspaceChoice;
+  archived: boolean;
   onArchive?: () => Promise<void>;
   onOpen: () => void;
 };
@@ -217,7 +240,8 @@ function issueFeedItem(
     meta,
     tone: statusTone(issue.status),
     workspace: workspaceForIssue(issue, workspaceCatalog),
-    onArchive: issue.identifier ? () => onArchive(detail) : undefined,
+    archived: Boolean(issue.archived),
+    onArchive: issue.identifier && !issue.archived ? () => onArchive(detail) : undefined,
     onOpen: () => onSelectDetail(detail)
   };
 }
@@ -245,7 +269,8 @@ function prFeedItem(
     meta,
     tone: statusTone(pr.status),
     workspace: workspaceForPr(pr, workspaceCatalog),
-    onArchive: pr.key ? () => onArchive(detail) : undefined,
+    archived: Boolean(pr.archived),
+    onArchive: pr.key && !pr.archived ? () => onArchive(detail) : undefined,
     onOpen: () => onSelectDetail(detail)
   };
 }

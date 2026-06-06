@@ -54,16 +54,18 @@ export function DetailPage(props: {
           Back
         </Button>
         <Group gap="xs">
-          <Button
-            color="red"
-            leftSection={<IconArchive size={14} />}
-            loading={isArchiving}
-            onClick={() => setArchiveModalOpen(true)}
-            size="xs"
-            variant="subtle"
-          >
-            Archive
-          </Button>
+          {!props.detail.item.archived ? (
+            <Button
+              color="red"
+              leftSection={<IconArchive size={14} />}
+              loading={isArchiving}
+              onClick={() => setArchiveModalOpen(true)}
+              size="xs"
+              variant="subtle"
+            >
+              Archive
+            </Button>
+          ) : null}
           <Text c="dimmed" size="xs">{props.detail.kind === "issue" ? "Issue" : "Pull request"}</Text>
         </Group>
       </Group>
