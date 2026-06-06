@@ -1095,14 +1095,15 @@ def read_status() -> dict[str, object]:
     except (FileNotFoundError, json.JSONDecodeError):
         payload = {}
     return {
-        "issues": payload.get("issues", {}) if isinstance(payload.get("issues", {}), dict) else {},
-        "prs": payload.get("prs", {}) if isinstance(payload.get("prs", {}), dict) else {},
-        "archived_prs": (
-            payload.get("archived_prs", {})
-            if isinstance(payload.get("archived_prs", {}), dict)
-            else {}
-        ),
+        "issues": _status_map(payload, "issues"),
+        "prs": _status_map(payload, "prs"),
+        "archived_prs": _status_map(payload, "archived_prs"),
     }
+
+
+def _status_map(payload: dict[str, object], key: str) -> dict[str, object]:
+    value = payload.get(key, {})
+    return value if isinstance(value, dict) else {}
 
 
 def write_status(payload: dict[str, object]) -> None:

@@ -84,36 +84,44 @@ export function DashboardView(props: {
               </ScrollArea.Autosize>
             </Tabs.Panel>
             <Tabs.Panel value="prs">
-              <ScrollArea.Autosize className="side-panel-scroll" type="auto">
-                <SummaryList emptyText="No PR status yet.">
-                  {data.prs.map((pr) => (
-                    <PullRequestItem
-                      key={pr.key ?? pr.url ?? pr.title}
-                      onOpen={() => props.onSelectDetail({ kind: "pr", item: pr })}
-                      pr={pr}
-                    />
-                  ))}
-                </SummaryList>
-              </ScrollArea.Autosize>
+              <PullRequestList
+                emptyText="No PR status yet."
+                prs={data.prs}
+                onSelectDetail={props.onSelectDetail}
+              />
             </Tabs.Panel>
             <Tabs.Panel value="archive">
-              <ScrollArea.Autosize className="side-panel-scroll" type="auto">
-                <SummaryList emptyText="No archived PRs yet.">
-                  {data.archived_prs.map((pr) => (
-                    <PullRequestItem
-                      key={pr.key ?? pr.url ?? pr.title}
-                      onOpen={() => props.onSelectDetail({ kind: "pr", item: pr })}
-                      pr={pr}
-                    />
-                  ))}
-                </SummaryList>
-              </ScrollArea.Autosize>
+              <PullRequestList
+                emptyText="No archived PRs yet."
+                prs={data.archived_prs}
+                onSelectDetail={props.onSelectDetail}
+              />
             </Tabs.Panel>
           </Tabs>
         </Paper>
       </Box>
       <LiveActivityPanel tasks={data.tasks} />
     </Stack>
+  );
+}
+
+function PullRequestList(props: {
+  emptyText: string;
+  prs: PullRequestStatus[];
+  onSelectDetail: (detail: SelectedDetail) => void;
+}) {
+  return (
+    <ScrollArea.Autosize className="side-panel-scroll" type="auto">
+      <SummaryList emptyText={props.emptyText}>
+        {props.prs.map((pr) => (
+          <PullRequestItem
+            key={pr.key ?? pr.url ?? pr.title}
+            onOpen={() => props.onSelectDetail({ kind: "pr", item: pr })}
+            pr={pr}
+          />
+        ))}
+      </SummaryList>
+    </ScrollArea.Autosize>
   );
 }
 
