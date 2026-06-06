@@ -33,6 +33,13 @@ body {
   flex: 0 0 auto;
 }
 
+.header-step {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-navbar {
   background: color-mix(in srgb, var(--mantine-color-dark-8) 94%, var(--mantine-color-blue-9));
   border-right-color: color-mix(in srgb, var(--mantine-color-default-border) 76%, transparent);

@@ -127,6 +127,7 @@ export function App() {
               <Badge color={data.connected ? "green" : "red"} variant="light">
                 {data.connected ? "Live" : "Disconnected"}
               </Badge>
+              <Text className="header-step" c="dimmed" size="sm">{step.label}</Text>
               <Text c="dimmed" size="sm">{data.refreshedAt.toLocaleTimeString()}</Text>
             </Group>
           </Group>
@@ -139,7 +140,6 @@ export function App() {
                 <Text fw={900} size="lg">Command Center</Text>
                 <Badge color="dark" radius="sm" size="xs" variant="light">v0.1.0</Badge>
               </Box>
-              <SidebarStatus data={data} step={step} />
               <Stack gap={4}>
                 <NavItem
                   active={activeTab === "issues"}
@@ -162,6 +162,7 @@ export function App() {
               </Stack>
             </Stack>
             <Stack gap={4}>
+              <SidebarStatus data={data} />
               <NavItem
                 active={activeTab === "workspaces"}
                 icon={<IconBriefcase size={18} />}
@@ -225,18 +226,16 @@ export function App() {
   );
 }
 
-function SidebarStatus(props: { data: DashboardData; step: { label: string; detail: string } }) {
+function SidebarStatus(props: { data: DashboardData }) {
   return (
     <Box className="sidebar-status">
-      <Group justify="space-between" gap="xs" mb={6} wrap="nowrap">
+      <Group justify="space-between" gap="xs" mb="xs" wrap="nowrap">
         <Text c="dimmed" fw={800} size="xs" tt="uppercase">Status</Text>
         <Badge color={props.data.connected ? "green" : "red"} size="xs" variant="light">
           {props.data.connected ? "Live" : "Offline"}
         </Badge>
       </Group>
-      <Text fw={800} size="sm">{props.step.label}</Text>
-      <Text c="dimmed" className="truncate" size="xs" title={props.step.detail}>{props.step.detail}</Text>
-      <Group className="sidebar-status-metrics" gap="xs" mt="sm" wrap="nowrap">
+      <Group className="sidebar-status-metrics" gap="xs" wrap="nowrap">
         <Box className="sidebar-status-metric">
           <Text c="dimmed" fw={700} size="xs" tt="uppercase">Issues</Text>
           <Text fw={800} size="sm">{props.data.issues.length}</Text>
