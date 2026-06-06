@@ -27,6 +27,7 @@ from .log_summary import read_or_create_log_summary
 
 LOG_DIR = Path(".logs")
 FRONTEND_DIST = Path("frontend/dist")
+LINEAR_TEAMS_MCP_TIMEOUT_SECONDS = 20
 
 
 def serve_logs(host: str = "127.0.0.1", port: int = 8765) -> None:
@@ -231,7 +232,7 @@ def linear_teams_index(payload: object) -> dict[str, object]:
             or optional_str(config.get("codex_reasoning_effort")),
             fast_mode=bool_value(payload.get("codex_fast_mode", config.get("codex_fast_mode", False))),
         )
-        teams = asyncio.run(client.teams(timeout_seconds=20))
+        teams = asyncio.run(client.teams(timeout_seconds=LINEAR_TEAMS_MCP_TIMEOUT_SECONDS))
         return {"ok": True, "source": "mcp", "teams": linear_teams_to_json(teams)}
     except Exception as exc:
         return linear_teams_error("mcp", str(exc))

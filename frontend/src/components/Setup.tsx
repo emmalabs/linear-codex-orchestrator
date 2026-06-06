@@ -58,6 +58,10 @@ type TeamLookupState = {
   response: LinearTeamsResponse | null;
   error: string | null;
 };
+type LinearTeamOption = {
+  value: string;
+  label: string;
+};
 
 export function SetupView(props: {
   configResponse: ConfigResponse | null;
@@ -433,7 +437,7 @@ function WorkspaceEditor(props: {
   };
   const repoCount = props.workspace.repos.length;
   const teamOptions = linearTeamOptions(props.teamLookup.response, props.workspace.teamKey);
-  const teamLookupUsable = Boolean(props.teamLookup.response?.ok && props.teamLookup.response.teams.length && teamOptions.length);
+  const teamLookupUsable = linearTeamsAvailable(props.teamLookup.response, teamOptions);
   const teamLookupMessage = linearTeamLookupMessage(props.teamLookup);
   return (
     <Box className="workspace-block">
@@ -456,13 +460,13 @@ function WorkspaceEditor(props: {
               <Select
                 aria-label="Linear team key"
                 data={teamOptions}
-                onChange={(value) => update({ teamKey: (value ?? "").toUpperCase() })}
+                onChange={(value) => update({ teamKey: normalizedTeamKey(value ?? "") })}
                 placeholder="Select a Linear team"
                 searchable
                 value={props.workspace.teamKey || null}
               />
             ) : (
-              <TextInput aria-label="Linear team key" value={props.workspace.teamKey} onChange={(event) => update({ teamKey: event.currentTarget.value.toUpperCase() })} placeholder="e.g. EMMA" />
+              <TextInput aria-label="Linear team key" value={props.workspace.teamKey} onChange={(event) => update({ teamKey: normalizedTeamKey(event.currentTarget.value) })} placeholder="e.g. EMMA" />
             )}
             {teamLookupMessage ? <Text c="dimmed" size="xs">{teamLookupMessage}</Text> : null}
           </Stack>
@@ -520,16 +524,24 @@ function WorkspaceEditor(props: {
   );
 }
 
-function linearTeamOptions(response: LinearTeamsResponse | null, currentTeamKey: string) {
+function linearTeamOptions(response: LinearTeamsResponse | null, currentTeamKey: string): LinearTeamOption[] {
   const options = (response?.ok ? response.teams : []).map((team) => ({
-    value: team.key.toUpperCase(),
-    label: `${team.key.toUpperCase()} - ${team.name}`
+    value: normalizedTeamKey(team.key),
+    label: `${normalizedTeamKey(team.key)} - ${team.name}`
   }));
-  const currentKey = currentTeamKey.trim().toUpperCase();
+  const currentKey = normalizedTeamKey(currentTeamKey);
   if (currentKey && !options.some((option) => option.value === currentKey)) {
     options.push({ value: currentKey, label: `${currentKey} - configured manually` });
   }
   return options.sort((left, right) => left.value.localeCompare(right.value));
+}
+
+function linearTeamsAvailable(response: LinearTeamsResponse | null, options: LinearTeamOption[]): boolean {
+  return Boolean(response?.ok && response.teams.length && options.length);
+}
+
+function normalizedTeamKey(value: string): string {
+  return value.trim().toUpperCase();
 }
 
 function linearTeamLookupMessage(lookup: TeamLookupState): string {
