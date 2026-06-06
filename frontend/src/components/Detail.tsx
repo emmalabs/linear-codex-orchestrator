@@ -240,7 +240,6 @@ function DetailProperties({ detail }: { detail: SelectedDetail }) {
         <Stack gap="sm">
           <Text fw={800}>Properties</Text>
           <DetailTile label="Status" value={issue.status} />
-          <DetailTile label="Project" value={issue.project} href={issue.project_url} />
           <DetailTile label="Updated" value={issue.updated_at} />
           <DetailTile label="Changed repos" value={issue.changed_repos ?? legacyChangedRepos(issue)} />
           <DetailTile label="Pull requests">
