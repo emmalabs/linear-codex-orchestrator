@@ -242,6 +242,18 @@ class Orchestrator:
             log(f"[dry-run] Would {action} {branch} and run Codex across {repo_list}")
             update_issue_status(issue, "Dry run")
             return
+        if not resume:
+            dirty_repos = self.dirty_workspace_repos(workspace)
+            if dirty_repos:
+                joined = ", ".join(dirty_repos)
+                log(f"Skipping {issue.identifier}: workspace has uncommitted changes in: {joined}")
+                update_issue_status(
+                    issue,
+                    "Workspace dirty",
+                    dirty_repos=joined,
+                    **workspace_status_context(workspace),
+                )
+                return
 
         try:
             log(f"{issue.identifier}: reading full Linear issue context")
@@ -265,15 +277,15 @@ class Orchestrator:
                 log(f"{issue.identifier}: planning")
                 update_issue_status(issue, "Planning")
                 plan = await self._plan(issue, workspace, issue_context)
-                log(f"{issue.identifier}: posting plan and moving to {self.settings.in_progress_status}")
-                await self.linear.comment(issue.id, plan_comment(plan))
-                await self.linear.move_issue(issue.id, self.settings.in_progress_status)
-                await self.linear.add_label(issue.id, self.settings.running_label)
                 log(f"{issue.identifier}: preparing branch {branch} in {len(workspace.repos)} repo(s)")
                 update_issue_status(issue, "Preparing branches")
                 for repo_key, repo in workspace.repos.items():
                     log(f"{issue.identifier}: ensuring {repo_key} branch {branch}")
                     ensure_branch(repo.path, repo.base, branch)
+                log(f"{issue.identifier}: posting plan and moving to {self.settings.in_progress_status}")
+                await self.linear.comment(issue.id, plan_comment(plan))
+                await self.linear.move_issue(issue.id, self.settings.in_progress_status)
+                await self.linear.add_label(issue.id, self.settings.running_label)
 
                 log(f"{issue.identifier}: implementation started")
                 update_issue_status(issue, "Implementing")
@@ -430,6 +442,13 @@ class Orchestrator:
             for repo_key, repo in workspace.repos.items()
             if has_changes(repo.path) or has_commits_since_base(repo.path, repo.base)
         }
+
+    def dirty_workspace_repos(self, workspace: WorkspaceConfig) -> list[str]:
+        return [
+            repo_key
+            for repo_key, repo in workspace.repos.items()
+            if has_changes(repo.path)
+        ]
 
     def checkout_existing_branch(self, workspace: WorkspaceConfig, branch: str) -> None:
         missing: list[str] = []
