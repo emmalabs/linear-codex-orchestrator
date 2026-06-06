@@ -9,6 +9,52 @@ body {
   overflow: hidden;
 }
 
+.setup-stack,
+.folder-picker-list,
+.orchestration-log,
+.formatted-log-message,
+.detail-page {
+  scrollbar-color: color-mix(in srgb, var(--mantine-color-gray-5) 46%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.setup-stack::-webkit-scrollbar,
+.folder-picker-list::-webkit-scrollbar,
+.orchestration-log::-webkit-scrollbar,
+.formatted-log-message::-webkit-scrollbar,
+.detail-page::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.setup-stack::-webkit-scrollbar-track,
+.folder-picker-list::-webkit-scrollbar-track,
+.orchestration-log::-webkit-scrollbar-track,
+.formatted-log-message::-webkit-scrollbar-track,
+.detail-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.setup-stack::-webkit-scrollbar-thumb,
+.folder-picker-list::-webkit-scrollbar-thumb,
+.orchestration-log::-webkit-scrollbar-thumb,
+.formatted-log-message::-webkit-scrollbar-thumb,
+.detail-page::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--mantine-color-gray-5) 46%, transparent);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+}
+
+.setup-stack::-webkit-scrollbar-thumb:hover,
+.folder-picker-list::-webkit-scrollbar-thumb:hover,
+.orchestration-log::-webkit-scrollbar-thumb:hover,
+.formatted-log-message::-webkit-scrollbar-thumb:hover,
+.detail-page::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--mantine-color-gray-4) 62%, transparent);
+  background-clip: content-box;
+}
+
 .app-main-inner,
 .command-grid {
   height: calc(100vh - 88px);
@@ -350,6 +396,26 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   padding: var(--mantine-spacing-md);
+}
+
+.feed-scroll [class*="mantine-ScrollArea-viewport"] > div {
+  padding-right: 10px !important;
+}
+
+.feed-scroll [class*="mantine-ScrollArea-scrollbar"] {
+  background: transparent;
+  padding: 2px;
+  width: 10px;
+}
+
+.feed-scroll [class*="mantine-ScrollArea-thumb"] {
+  background: color-mix(in srgb, var(--mantine-color-gray-5) 46%, transparent);
+  border-radius: 999px;
+  min-height: 64px;
+}
+
+.feed-scroll [class*="mantine-ScrollArea-thumb"]:hover {
+  background: color-mix(in srgb, var(--mantine-color-gray-4) 62%, transparent);
 }
 
 .feed-section-title {
