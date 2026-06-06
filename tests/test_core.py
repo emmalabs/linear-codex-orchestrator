@@ -31,6 +31,7 @@ from linear_codex_orchestrator.log_summary import last_interesting_line, summari
 from linear_codex_orchestrator.orchestrator import (
     Orchestrator,
     archive_stale_prs,
+    archive_pr_status,
     codex_log_path,
     implementation_comment,
     log_session_start,
@@ -61,6 +62,7 @@ from linear_codex_orchestrator.run_state import (
     write_issue_run_state,
 )
 from linear_codex_orchestrator.web_server import (
+    archive_status_item,
     browse_index,
     github_repo_index,
     render_missing_frontend,
@@ -74,6 +76,7 @@ from linear_codex_orchestrator.web_server import (
     task_index,
     tail_text,
     config_index,
+    update_status_item,
 )
 
 
@@ -524,7 +527,7 @@ class CoreTests(unittest.TestCase):
                 status = read_status()
 
         self.assertIn("acme/web#13", status["prs"])
-        self.assertNotIn("acme/web#12", status["prs"])
+        self.assertTrue(status["prs"]["acme/web#12"]["archived"])
         self.assertEqual(status["archived_prs"]["acme/web#12"]["status"], "Merged")
         self.assertIn("archived_at", status["archived_prs"]["acme/web#12"])
 
@@ -558,7 +561,7 @@ class CoreTests(unittest.TestCase):
                 asyncio.run(archive_stale_prs(FakeGitHub(), "acme/web", []))
                 status = read_status()
 
-        self.assertNotIn("acme/web#12", status["prs"])
+        self.assertTrue(status["prs"]["acme/web#12"]["archived"])
         self.assertIn("acme/api#7", status["prs"])
         self.assertIn("acme/old#1", status["archived_prs"])
 
@@ -592,6 +595,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(status["archived_prs"]["acme/web#1"]["status"], "Merged")
         self.assertEqual(status["archived_prs"]["acme/web#2"]["status"], "Closed")
         self.assertEqual(status["archived_prs"]["acme/web#3"]["status"], "Archived")
+
+    def test_archive_pr_status_marks_pr_archived(self) -> None:
+        pr = OpenPullRequest("acme/web", 12, "https://github.com/acme/web/pull/12", "Fix", "branch", "main")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                update_pr_status(pr, "Ready")
+                self.assertTrue(archive_pr_status(pr))
+                self.assertFalse(archive_pr_status(pr))
+                status = read_status()
+        self.assertTrue(status["prs"]["acme/web#12"]["archived"])
+        self.assertIn("archived_at", status["prs"]["acme/web#12"])
 
     def test_web_log_index_and_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -739,6 +754,40 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summary["prs"][0]["key"], "acme/web#1")
         self.assertEqual(summary["prs"][0]["repo_path"], "/tmp/workspace/web")
         self.assertEqual(summary["archived_prs"][0]["key"], "acme/web#2")
+
+    def test_archive_status_item_moves_status_entries_to_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                (tmp_path / "status.json").write_text(
+                    '{"issues":{"ENG-1":{"identifier":"ENG-1"}},'
+                    '"prs":{"acme/web#1":{"key":"acme/web#1"}}}',
+                    encoding="utf-8",
+                )
+                self.assertTrue(archive_status_item("issue", "ENG-1"))
+                self.assertTrue(archive_status_item("pr", "acme/web#1"))
+                self.assertFalse(archive_status_item("issue", "ENG-2"))
+                summary = status_index()
+        self.assertEqual(summary["issues"], [])
+        self.assertEqual(summary["prs"], [])
+        self.assertEqual(summary["archived_issues"][0]["identifier"], "ENG-1")
+        self.assertEqual(summary["archived_prs"][0]["key"], "acme/web#1")
+
+    def test_update_status_item_changes_status_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                (tmp_path / "status.json").write_text(
+                    '{"issues":{"ENG-1":{"identifier":"ENG-1","status":"Ready"}},'
+                    '"prs":{"acme/web#1":{"key":"acme/web#1","status":"Open"}}}',
+                    encoding="utf-8",
+                )
+                self.assertTrue(update_status_item("issue", "ENG-1", "Done"))
+                self.assertTrue(update_status_item("pr", "acme/web#1", "Merged"))
+                self.assertFalse(update_status_item("issue", "ENG-2", "Done"))
+                summary = status_index()
+        self.assertEqual(summary["issues"][0]["status"], "Done")
+        self.assertEqual(summary["prs"][0]["status"], "Merged")
 
     def test_web_config_index_reads_sqlite_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1186,6 +1235,46 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(linear.calls, [("In Progress", "agent-running")])
         self.assertEqual(seen, [("ENG-1", True)])
+
+    def test_run_pr_feedback_once_archives_merged_pr_statuses(self) -> None:
+        merged_pr = OpenPullRequest(
+            "acme/web",
+            12,
+            "https://github.com/acme/web/pull/12",
+            "Merged",
+            "codex/eng-1",
+            "develop",
+        )
+
+        class FakeGitHub:
+            async def close(self) -> None:
+                return None
+
+            async def list_open_prs(self, *_args: object, **_kwargs: object) -> list[object]:
+                return []
+
+            async def list_merged_prs(self, *_args: object, **_kwargs: object) -> list[OpenPullRequest]:
+                return [merged_pr]
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        orchestrator = Orchestrator(
+            Settings(workspace_map={"ENG": workspace}),
+            github=FakeGitHub(),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                with patch("linear_codex_orchestrator.web_server.LOG_DIR", Path(tmp)):
+                    update_pr_status(merged_pr, "Ready for review")
+                    asyncio.run(orchestrator.run_pr_feedback_once())
+                    summary = status_index()
+
+        self.assertEqual(summary["prs"], [])
+        self.assertEqual(summary["archived_prs"][0]["key"], "acme/web#12")
 
     def test_run_once_resumes_interrupted_in_progress_issue_with_existing_branch(self) -> None:
         issue = parse_linear_issue(

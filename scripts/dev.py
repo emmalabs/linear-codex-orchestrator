@@ -4,7 +4,6 @@ import argparse
 import os
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -49,8 +48,11 @@ def main() -> int:
     )
 
     processes = [process for process in (backend, frontend) if process is not None]
+    shutting_down = False
 
     def stop_all(_signum: int | None = None, _frame: object | None = None) -> None:
+        nonlocal shutting_down
+        shutting_down = True
         for process in processes:
             process.stop()
 
@@ -69,7 +71,7 @@ def main() -> int:
         frontend.start()
 
     try:
-        while True:
+        while not shutting_down:
             for process in processes:
                 process.report_if_exited()
             current_signature = source_signature()
@@ -105,18 +107,20 @@ class ManagedProcess:
 
     def start(self) -> None:
         print(f"Starting {self.name}: {' '.join(self.command)}", flush=True)
-        self.process = subprocess.Popen(self.command, cwd=ROOT, env=self.env)
+        self.process = subprocess.Popen(self.command, cwd=ROOT, env=self.env, start_new_session=True)
 
     def stop(self) -> None:
         if not self.process or self.process.poll() is not None:
             return
         print(f"Stopping {self.name}...", flush=True)
-        self.process.terminate()
+        self._signal_process_group(signal.SIGTERM)
         try:
             self.process.wait(timeout=8)
         except subprocess.TimeoutExpired:
-            self.process.kill()
+            self._signal_process_group(signal.SIGKILL)
             self.process.wait(timeout=8)
+        finally:
+            self.process = None
 
     def restart(self) -> None:
         self.stop()
@@ -129,6 +133,14 @@ class ManagedProcess:
         if code is not None:
             print(f"{self.name} exited with code {code}", flush=True)
             self.process = None
+
+    def _signal_process_group(self, signum: int) -> None:
+        if not self.process:
+            return
+        try:
+            os.killpg(self.process.pid, signum)
+        except ProcessLookupError:
+            return
 
 
 if __name__ == "__main__":

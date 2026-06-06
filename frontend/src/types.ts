@@ -4,12 +4,15 @@ export type IssueStatus = {
   url?: string;
   project?: string;
   project_url?: string;
+  team?: string;
   workspace_path?: string;
   repos?: Array<{ key: string; github?: string; path?: string; base?: string }> | string;
   changed_repos?: string;
   prs?: string;
   status?: string;
   updated_at?: string;
+  archived?: boolean;
+  archived_at?: string;
 };
 
 export type PullRequestStatus = {
@@ -24,8 +27,9 @@ export type PullRequestStatus = {
   issue?: string;
   feedback_count?: number;
   status?: string;
-  archived_at?: string;
   updated_at?: string;
+  archived?: boolean;
+  archived_at?: string;
 };
 
 export type StageLogSummary = {
@@ -64,7 +68,8 @@ export type TaskLog = {
 export type DashboardData = {
   issues: IssueStatus[];
   prs: PullRequestStatus[];
-  archived_prs: PullRequestStatus[];
+  archivedIssues: IssueStatus[];
+  archivedPrs: PullRequestStatus[];
   tasks: TaskLog[];
   orchestration: string;
   connected: boolean;
@@ -168,7 +173,8 @@ export type BrowseRepository = {
 export const emptyData: DashboardData = {
   issues: [],
   prs: [],
-  archived_prs: [],
+  archivedIssues: [],
+  archivedPrs: [],
   tasks: [],
   orchestration: "",
   connected: false,

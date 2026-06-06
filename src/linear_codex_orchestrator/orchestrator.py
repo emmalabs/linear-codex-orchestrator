@@ -149,6 +149,7 @@ class Orchestrator:
                     repo.github,
                     branch_prefix=self.settings.pr_feedback_branch_prefix,
                 )
+                await self.archive_merged_prs(repo.github, repo_key)
                 log(f"{repo_key}: found {len(prs)} open PR(s) for feedback check")
                 await archive_stale_prs(self.github, repo.github, prs)
                 for pr in prs:
@@ -157,6 +158,25 @@ class Orchestrator:
                     except Exception as exc:
                         log(f"{repo.github}#{pr.number}: PR feedback processing failed; daemon will continue: {exc}")
         log("PR feedback check complete")
+
+    async def archive_merged_prs(self, repo: str, repo_key: str) -> None:
+        list_merged_prs = getattr(self.github, "list_merged_prs", None)
+        if not callable(list_merged_prs):
+            return
+        try:
+            merged_prs = await list_merged_prs(
+                repo,
+                branch_prefix=self.settings.pr_feedback_branch_prefix,
+            )
+        except Exception as exc:
+            log(f"{repo_key}: merged PR archive check failed; daemon will continue: {exc}")
+            return
+        archived = 0
+        for pr in merged_prs:
+            if archive_pr_status(pr):
+                archived += 1
+        if archived:
+            log(f"{repo_key}: archived {archived} merged PR status entr{'y' if archived == 1 else 'ies'}")
 
     async def process_pr_feedback(self, repo_key: str, repo: RepoConfig, pr: OpenPullRequest) -> None:
         lock_name = f"pr-feedback:{repo.github}:{pr.number}"
@@ -1094,10 +1114,16 @@ def read_status() -> dict[str, object]:
             payload = json.load(handle)
     except (FileNotFoundError, json.JSONDecodeError):
         payload = {}
+    issues = _status_map(payload, "issues")
+    prs = _status_map(payload, "prs")
+    legacy_archived_prs = _status_map(payload, "archived_prs")
+    for key, value in legacy_archived_prs.items():
+        if isinstance(value, dict) and key not in prs:
+            prs[key] = {**value, "archived": True}
     return {
-        "issues": _status_map(payload, "issues"),
-        "prs": _status_map(payload, "prs"),
-        "archived_prs": _status_map(payload, "archived_prs"),
+        "issues": issues,
+        "prs": prs,
+        "archived_prs": {key: value for key, value in prs.items() if isinstance(value, dict) and value.get("archived")},
     }
 
 
@@ -1107,9 +1133,10 @@ def _status_map(payload: dict[str, object], key: str) -> dict[str, object]:
 
 
 def write_status(payload: dict[str, object]) -> None:
+    stored = {key: value for key, value in payload.items() if key != "archived_prs"}
     status_path().parent.mkdir(parents=True, exist_ok=True)
     with status_path().open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
+        json.dump(stored, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
 
@@ -1148,14 +1175,13 @@ def update_pr_status(
 ) -> None:
     payload = read_status()
     prs = payload["prs"]
-    archived_prs = payload["archived_prs"]
     assert isinstance(prs, dict)
-    assert isinstance(archived_prs, dict)
     key = f"{pr.repo}#{pr.number}"
     current = prs.get(key, {})
     if not isinstance(current, dict):
         current = {}
-    archived_prs.pop(key, None)
+    current.pop("archived", None)
+    current.pop("archived_at", None)
     current.update(
         {
             "key": key,
@@ -1203,7 +1229,7 @@ async def archive_stale_prs(
 
     archived_at = datetime.now().isoformat(timespec="seconds")
     for key in stale_keys:
-        current = prs.pop(key)
+        current = prs[key]
         assert isinstance(current, dict)
         status = "Archived"
         number = pr_entry_number(key, current)
@@ -1215,6 +1241,7 @@ async def archive_stale_prs(
         current.update(
             {
                 "status": status,
+                "archived": True,
                 "archived_at": archived_at,
                 "updated_at": archived_at,
             }
@@ -1240,6 +1267,20 @@ def pr_entry_number(key: str, entry: dict[str, object]) -> int | None:
         return int(number)
     match = re.search(r"#(\d+)$", key)
     return int(match.group(1)) if match else None
+
+
+def archive_pr_status(pr: OpenPullRequest) -> bool:
+    payload = read_status()
+    prs = payload["prs"]
+    assert isinstance(prs, dict)
+    key = f"{pr.repo}#{pr.number}"
+    current = prs.get(key)
+    existed = isinstance(current, dict) and not current.get("archived")
+    if existed:
+        current["archived"] = True
+        current["archived_at"] = datetime.now().isoformat(timespec="seconds")
+    write_status(payload)
+    return existed
 
 
 def workspace_status_context(workspace: WorkspaceConfig) -> dict[str, object]:

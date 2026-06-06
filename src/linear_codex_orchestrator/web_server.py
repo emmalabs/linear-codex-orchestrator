@@ -6,6 +6,7 @@ import mimetypes
 import re
 import subprocess
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -89,6 +90,9 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             return
         if self._send_frontend_asset(path):
             return
+        if not Path(path).name or "." not in Path(path).name:
+            self._send_frontend_index()
+            return
         self.send_error(404)
 
     def do_POST(self) -> None:
@@ -98,6 +102,12 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/linear/teams":
             self._linear_teams()
+            return
+        if path == "/api/status/archive":
+            self._archive_status()
+            return
+        if path == "/api/status/update":
+            self._update_status()
             return
         self.send_error(404)
 
@@ -173,6 +183,43 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         if length <= 0:
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def _archive_status(self) -> None:
+        try:
+            payload = self._read_json_body()
+            if not isinstance(payload, dict):
+                raise ValueError("Archive payload must be a JSON object.")
+            kind = payload.get("kind")
+            key = payload.get("key")
+            if kind not in {"issue", "pr"}:
+                raise ValueError('Archive kind must be "issue" or "pr".')
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("Archive key is required.")
+            archived = archive_status_item(kind, key.strip())
+        except (json.JSONDecodeError, RuntimeError, ValueError) as exc:
+            self._send_error_json(400, str(exc))
+            return
+        self._send_json({"ok": True, "archived": archived, "status": status_index()})
+
+    def _update_status(self) -> None:
+        try:
+            payload = self._read_json_body()
+            if not isinstance(payload, dict):
+                raise ValueError("Status payload must be a JSON object.")
+            kind = payload.get("kind")
+            key = payload.get("key")
+            status = payload.get("status")
+            if kind not in {"issue", "pr"}:
+                raise ValueError('Status kind must be "issue" or "pr".')
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("Status key is required.")
+            if not isinstance(status, str) or not status.strip():
+                raise ValueError("Status value is required.")
+            updated = update_status_item(kind, key.strip(), status.strip())
+        except (json.JSONDecodeError, RuntimeError, ValueError) as exc:
+            self._send_error_json(400, str(exc))
+            return
+        self._send_json({"ok": True, "updated": updated, "status": status_index()})
 
     def _send_log(self, raw_name: str) -> None:
         try:
@@ -500,33 +547,87 @@ def task_from_log_name(name: str) -> dict[str, str]:
 
 
 def status_index() -> dict[str, object]:
+    payload = read_status_payload()
+    issues = payload.get("issues", {})
+    prs = payload.get("prs", {})
+    issue_values = list(issues.values()) if isinstance(issues, dict) else []
+    pr_values = list(prs.values()) if isinstance(prs, dict) else []
+    return {
+        "issues": sorted_status_items(item for item in issue_values if not is_archived_status_item(item)),
+        "prs": sorted_status_items(item for item in pr_values if not is_archived_status_item(item)),
+        "archived_issues": sorted_status_items(item for item in issue_values if is_archived_status_item(item)),
+        "archived_prs": sorted_status_items(item for item in pr_values if is_archived_status_item(item)),
+    }
+
+
+def archive_status_item(kind: str, key: str) -> bool:
+    payload = read_status_payload()
+    collection_key = "issues" if kind == "issue" else "prs"
+    collection = payload.get(collection_key, {})
+    if not isinstance(collection, dict):
+        collection = {}
+        payload[collection_key] = collection
+    current = collection.get(key)
+    existed = isinstance(current, dict) and not current.get("archived")
+    if existed:
+        current["archived"] = True
+        current["archived_at"] = datetime.now().isoformat(timespec="seconds")
+    write_status_payload(payload)
+    return existed
+
+
+def update_status_item(kind: str, key: str, status: str) -> bool:
+    payload = read_status_payload()
+    collection_key = "issues" if kind == "issue" else "prs"
+    collection = payload.get(collection_key, {})
+    if not isinstance(collection, dict):
+        collection = {}
+        payload[collection_key] = collection
+    current = collection.get(key)
+    if not isinstance(current, dict):
+        return False
+    current["status"] = status
+    current["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    write_status_payload(payload)
+    return True
+
+
+def sorted_status_items(items: object) -> list[object]:
+    return sorted(
+        items,
+        key=lambda item: str(item.get("archived_at") or item.get("updated_at", "")) if isinstance(item, dict) else "",
+        reverse=True,
+    )
+
+
+def is_archived_status_item(item: object) -> bool:
+    return isinstance(item, dict) and bool(item.get("archived"))
+
+
+def read_status_payload() -> dict[str, object]:
     try:
         with (LOG_DIR / "status.json").open(encoding="utf-8") as handle:
             payload = json.load(handle)
     except (FileNotFoundError, json.JSONDecodeError):
         payload = {}
+    issues = payload.get("issues", {}) if isinstance(payload.get("issues", {}), dict) else {}
+    prs = payload.get("prs", {}) if isinstance(payload.get("prs", {}), dict) else {}
+    legacy_archived_prs = payload.get("archived_prs", {})
+    if isinstance(legacy_archived_prs, dict):
+        for key, value in legacy_archived_prs.items():
+            if isinstance(value, dict) and key not in prs:
+                prs[key] = {**value, "archived": True}
     return {
-        "issues": sorted(
-            _status_values(payload, "issues"),
-            key=lambda item: str(item.get("updated_at", "")),
-            reverse=True,
-        ),
-        "prs": sorted(
-            _status_values(payload, "prs"),
-            key=lambda item: str(item.get("updated_at", "")),
-            reverse=True,
-        ),
-        "archived_prs": sorted(
-            _status_values(payload, "archived_prs"),
-            key=lambda item: str(item.get("archived_at") or item.get("updated_at", "")),
-            reverse=True,
-        ),
+        "issues": issues,
+        "prs": prs,
     }
 
 
-def _status_values(payload: dict[str, object], key: str) -> list[dict[str, object]]:
-    value = payload.get(key, {})
-    return list(value.values()) if isinstance(value, dict) else []
+def write_status_payload(payload: dict[str, object]) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    with (LOG_DIR / "status.json").open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
 
 
 def render_missing_frontend() -> str:
