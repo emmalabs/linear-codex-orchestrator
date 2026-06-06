@@ -4,7 +4,9 @@ import {
   ActionIcon,
   Badge,
   Box,
+  Button,
   Group,
+  Modal,
   Paper,
   ScrollArea,
   Select,
@@ -351,14 +353,17 @@ function repoMeta(value: string) {
 
 function FeedRow({ item }: { item: FeedItem }) {
   const timeLabel = relativeTime(item.updatedAt);
+  const [archiveModalOpen, setArchiveModalOpen] = React.useState(false);
   const [isArchiving, setIsArchiving] = React.useState(false);
-  const archiveItem = async (event: React.MouseEvent<HTMLButtonElement>) => {
+  const openArchiveModal = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (!item.onArchive || isArchiving) {
       return;
     }
-    const confirmed = window.confirm(`Archive ${item.displayKey} from the dashboard?`);
-    if (!confirmed) {
+    setArchiveModalOpen(true);
+  };
+  const archiveItem = async () => {
+    if (!item.onArchive || isArchiving) {
       return;
     }
     setIsArchiving(true);
@@ -371,7 +376,8 @@ function FeedRow({ item }: { item: FeedItem }) {
   };
 
   return (
-    <UnstyledButton className={`feed-row feed-row-${item.tone}`} onClick={item.onOpen}>
+    <>
+      <UnstyledButton className={`feed-row feed-row-${item.tone}`} onClick={item.onOpen}>
       <span className={`feed-row-accent feed-row-accent-${item.tone}`} aria-hidden="true" />
       <Box className="feed-row-body" miw={0}>
         <Group align="flex-start" justify="space-between" gap="sm" wrap="nowrap">
@@ -402,7 +408,7 @@ function FeedRow({ item }: { item: FeedItem }) {
                 className="feed-row-archive"
                 color="gray"
                 loading={isArchiving}
-                onClick={archiveItem}
+                onClick={openArchiveModal}
                 size="sm"
                 title={`Archive ${item.displayKey}`}
                 variant="subtle"
@@ -423,7 +429,29 @@ function FeedRow({ item }: { item: FeedItem }) {
           </Group>
         ) : null}
       </Box>
-    </UnstyledButton>
+      </UnstyledButton>
+      <Modal
+        centered
+        opened={archiveModalOpen}
+        onClose={() => setArchiveModalOpen(false)}
+        size="sm"
+        title={`Archive ${item.displayKey}`}
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Remove this item from the local dashboard status list? This will not delete it from Linear or GitHub.
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            <Button disabled={isArchiving} onClick={() => setArchiveModalOpen(false)} size="xs" variant="subtle">
+              Cancel
+            </Button>
+            <Button color="red" loading={isArchiving} onClick={archiveItem} size="xs">
+              Archive
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
   );
 }
 

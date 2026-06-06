@@ -8,6 +8,7 @@ import {
   Box,
   Button,
   Group,
+  Modal,
   Paper,
   Select,
   Stack,
@@ -28,12 +29,9 @@ export function DetailPage(props: {
   onBack: () => void;
   onStatusChange: (detail: SelectedDetail, status: string) => Promise<void>;
 }) {
+  const [archiveModalOpen, setArchiveModalOpen] = React.useState(false);
   const [isArchiving, setIsArchiving] = React.useState(false);
   const archiveDetail = async () => {
-    const confirmed = window.confirm(`Archive ${key} from the dashboard?`);
-    if (!confirmed) {
-      return;
-    }
     setIsArchiving(true);
     try {
       await props.onArchive(props.detail);
@@ -60,7 +58,7 @@ export function DetailPage(props: {
             color="red"
             leftSection={<IconArchive size={14} />}
             loading={isArchiving}
-            onClick={archiveDetail}
+            onClick={() => setArchiveModalOpen(true)}
             size="xs"
             variant="subtle"
           >
@@ -69,6 +67,27 @@ export function DetailPage(props: {
           <Text c="dimmed" size="xs">{props.detail.kind === "issue" ? "Issue" : "Pull request"}</Text>
         </Group>
       </Group>
+      <Modal
+        centered
+        opened={archiveModalOpen}
+        onClose={() => setArchiveModalOpen(false)}
+        size="sm"
+        title={`Archive ${key}`}
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Remove this item from the local dashboard status list? This will not delete it from Linear or GitHub.
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            <Button disabled={isArchiving} onClick={() => setArchiveModalOpen(false)} size="xs" variant="subtle">
+              Cancel
+            </Button>
+            <Button color="red" loading={isArchiving} onClick={archiveDetail} size="xs">
+              Archive
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       <Box className="detail-layout">
         <Stack className="detail-main" gap="md" miw={0}>
