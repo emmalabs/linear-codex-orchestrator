@@ -23,6 +23,7 @@ from linear_codex_orchestrator.linear_api_client import (
     issue_from_node,
     issue_matches_labels,
     render_issue_context,
+    team_from_node,
 )
 from linear_codex_orchestrator.local_linear_client import LocalLinearClient, is_transient_linear_error
 from linear_codex_orchestrator.log_summary import last_interesting_line, summarize_codex_log, tokens_used, write_log_summary
@@ -48,6 +49,7 @@ from linear_codex_orchestrator.orchestrator import (
     write_processed_feedback,
 )
 from linear_codex_orchestrator.models import OpenPullRequest, PullRequestFeedback, parse_linear_issue
+from linear_codex_orchestrator.models import LinearTeam
 from linear_codex_orchestrator.locks import lock_file_is_stale, lock_for_repo
 from linear_codex_orchestrator.prompt_templates import render_prompt
 from linear_codex_orchestrator.run_state import (
@@ -60,6 +62,7 @@ from linear_codex_orchestrator.web_server import (
     browse_index,
     github_repo_index,
     render_missing_frontend,
+    linear_teams_index,
     log_index,
     safe_frontend_path,
     safe_log_path,
@@ -252,6 +255,22 @@ class CoreTests(unittest.TestCase):
         self.assertIn("# ENG-1: Ship", context)
         self.assertIn("Comment body", context)
         self.assertIn("Spec: https://example.com/spec", context)
+
+    def test_linear_api_team_parsing_and_graphql_payload(self) -> None:
+        self.assertEqual(team_from_node({"id": "team-id", "key": "eng", "name": "Engineering"}).key, "ENG")
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        async def fake_graphql(query: str, variables: dict[str, object]) -> dict[str, object]:
+            calls.append((query, variables))
+            return {"teams": {"nodes": [{"id": "team-id", "key": "ENG", "name": "Engineering"}]}}
+
+        client = LinearApiClient("lin_api_test")
+        with patch.object(client, "_graphql", fake_graphql):
+            teams = asyncio.run(client.teams())
+
+        self.assertEqual(teams, [LinearTeam(id="team-id", key="ENG", name="Engineering")])
+        self.assertIn("teams(first: 250)", calls[0][0])
+        self.assertEqual(calls[0][1], {})
 
     def test_validate_workspace_map_rejects_missing_paths(self) -> None:
         missing = Path("/definitely/missing/workspace")
@@ -620,6 +639,87 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(summary["exists"])
         self.assertEqual(summary["config"]["workspace_map"]["ENG"]["repos"]["web"]["github"], "acme/web")
 
+    def test_linear_teams_endpoint_prefers_request_api_key(self) -> None:
+        seen_keys: list[str] = []
+
+        class FakeLinearApiClient:
+            def __init__(self, api_key: str) -> None:
+                seen_keys.append(api_key)
+
+            async def teams(self) -> list[LinearTeam]:
+                return [LinearTeam(id="team-id", key="ENG", name="Engineering")]
+
+        with patch("linear_codex_orchestrator.web_server.config_payload_from_env", return_value={"linear_api_key": "lin_env"}):
+            with patch("linear_codex_orchestrator.web_server.read_config_file", return_value={"linear_api_key": "lin_saved"}):
+                with patch("linear_codex_orchestrator.web_server.LinearApiClient", FakeLinearApiClient):
+                    summary = linear_teams_index({"linear_api_key": "lin_request"})
+
+        self.assertEqual(seen_keys, ["lin_request"])
+        self.assertEqual(summary, {"ok": True, "source": "api", "teams": [{"id": "team-id", "key": "ENG", "name": "Engineering"}]})
+
+    def test_linear_teams_endpoint_uses_saved_or_env_api_key_before_mcp(self) -> None:
+        seen_keys: list[str] = []
+
+        class FakeLinearApiClient:
+            def __init__(self, api_key: str) -> None:
+                seen_keys.append(api_key)
+
+            async def teams(self) -> list[LinearTeam]:
+                return []
+
+        with patch("linear_codex_orchestrator.web_server.config_payload_from_env", return_value={"linear_api_key": "lin_env"}):
+            with patch("linear_codex_orchestrator.web_server.read_config_file", return_value={"codex_model": "gpt-5.5"}):
+                with patch("linear_codex_orchestrator.web_server.LinearApiClient", FakeLinearApiClient):
+                    summary = linear_teams_index({})
+
+        self.assertEqual(seen_keys, ["lin_env"])
+        self.assertEqual(summary["source"], "api")
+
+    def test_linear_teams_endpoint_falls_back_to_mcp_with_codex_settings(self) -> None:
+        seen: list[dict[str, object]] = []
+
+        class FakeLocalLinearClient:
+            def __init__(self, cwd: Path, **kwargs: object) -> None:
+                seen.append({"cwd": cwd, **kwargs})
+
+            async def teams(self, timeout_seconds: int) -> list[LinearTeam]:
+                seen.append({"timeout_seconds": timeout_seconds})
+                return [LinearTeam(id="team-id", key="CODEX", name="Codex Orchestrator")]
+
+        with patch("linear_codex_orchestrator.web_server.config_payload_from_env", return_value={}):
+            with patch("linear_codex_orchestrator.web_server.read_config_file", return_value={"codex_model": "saved-model"}):
+                with patch("linear_codex_orchestrator.web_server.LocalLinearClient", FakeLocalLinearClient):
+                    summary = linear_teams_index({
+                        "codex_model": "request-model",
+                        "codex_reasoning_effort": "low",
+                        "codex_fast_mode": True,
+                    })
+
+        self.assertEqual(seen[0]["model"], "request-model")
+        self.assertEqual(seen[0]["reasoning_effort"], "low")
+        self.assertEqual(seen[0]["fast_mode"], True)
+        self.assertEqual(seen[1]["timeout_seconds"], 20)
+        self.assertEqual(summary["source"], "mcp")
+        self.assertEqual(summary["teams"], [{"id": "team-id", "key": "CODEX", "name": "Codex Orchestrator"}])
+
+    def test_linear_teams_endpoint_fails_softly(self) -> None:
+        class FakeLinearApiClient:
+            def __init__(self, _api_key: str) -> None:
+                return None
+
+            async def teams(self) -> list[LinearTeam]:
+                raise RuntimeError("Linear API GraphQL error")
+
+        with patch("linear_codex_orchestrator.web_server.config_payload_from_env", return_value={}):
+            with patch("linear_codex_orchestrator.web_server.read_config_file", return_value={"linear_api_key": "lin_saved"}):
+                with patch("linear_codex_orchestrator.web_server.LinearApiClient", FakeLinearApiClient):
+                    summary = linear_teams_index({})
+
+        self.assertEqual(summary["ok"], False)
+        self.assertEqual(summary["source"], "api")
+        self.assertEqual(summary["teams"], [])
+        self.assertIn("Linear API GraphQL error", str(summary["error"]))
+
     def test_web_browse_index_lists_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -786,6 +886,24 @@ class CoreTests(unittest.TestCase):
         self.assertIn('team key in "ENG"', calls[0][0])
         self.assertIn("project_name, project_url", calls[0][0])
         self.assertIn("Do not read local files", calls[0][0])
+        self.assertFalse(calls[0][1]["show_output"])
+
+    def test_linear_mcp_team_lookup_uses_schema_read_only_and_short_timeout(self) -> None:
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def fake_run_codex(prompt: str, *_args: object, **kwargs: object) -> str:
+            calls.append((prompt, kwargs))
+            return '{"teams":[{"id":"team-id","key":"eng","name":"Engineering"}]}'
+
+        with patch("linear_codex_orchestrator.local_linear_client.run_codex", fake_run_codex):
+            teams = asyncio.run(LocalLinearClient(Path("/tmp/workspace")).teams(timeout_seconds=7))
+
+        self.assertEqual(teams, [LinearTeam(id="team-id", key="ENG", name="Engineering")])
+        self.assertIn("List the visible Linear teams only.", calls[0][0])
+        self.assertIn("Do not read local files", calls[0][0])
+        self.assertEqual(calls[0][1]["sandbox"], "read-only")
+        self.assertEqual(calls[0][1]["timeout_seconds"], 7)
+        self.assertEqual(calls[0][1]["output_schema"]["required"], ["teams"])
         self.assertFalse(calls[0][1]["show_output"])
 
     def test_issue_context_runs_quietly_and_uses_only_linear_mcp(self) -> None:

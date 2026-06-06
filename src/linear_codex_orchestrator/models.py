@@ -20,6 +20,13 @@ class LinearIssue:
 
 
 @dataclass(frozen=True)
+class LinearTeam:
+    id: str
+    key: str
+    name: str
+
+
+@dataclass(frozen=True)
 class PullRequest:
     number: int
     url: str

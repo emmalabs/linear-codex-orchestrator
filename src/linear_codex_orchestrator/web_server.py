@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import mimetypes
 import re
@@ -10,12 +11,17 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .config import (
+    bool_value,
     config_payload_from_env,
     config_path,
     normalize_config_payload,
+    optional_str,
     read_config_file,
     write_config_file,
 )
+from .linear_api_client import LinearApiClient
+from .local_linear_client import LocalLinearClient
+from .models import LinearTeam
 from .log_summary import read_or_create_log_summary
 
 
@@ -89,6 +95,9 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             self._write_config()
             return
+        if path == "/api/linear/teams":
+            self._linear_teams()
+            return
         self.send_error(404)
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -138,11 +147,7 @@ class LogRequestHandler(BaseHTTPRequestHandler):
 
     def _write_config(self) -> None:
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            if length > 1024 * 1024:
-                self._send_error_json(413, "Config payload is too large.")
-                return
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            payload = self._read_json_body()
             if not isinstance(payload, dict):
                 raise ValueError("Config payload must be a JSON object.")
             normalized = normalize_config_payload(payload)
@@ -151,6 +156,22 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(400, str(exc))
             return
         self._send_json({"ok": True, "config": config_index()})
+
+    def _linear_teams(self) -> None:
+        try:
+            payload = self._read_json_body()
+        except (json.JSONDecodeError, ValueError) as exc:
+            self._send_json(linear_teams_error("none", str(exc)))
+            return
+        self._send_json(linear_teams_index(payload))
+
+    def _read_json_body(self) -> object:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > 1024 * 1024:
+            raise ValueError("Config payload is too large.")
+        if length <= 0:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def _send_log(self, raw_name: str) -> None:
         try:
@@ -185,6 +206,49 @@ def config_index() -> dict[str, object]:
         "source": source,
         "config": config,
     }
+
+
+def linear_teams_index(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return linear_teams_error("none", "Team lookup payload must be a JSON object.")
+    config = merged_config_payload()
+    request_key = optional_str(payload.get("linear_api_key"))
+    saved_key = optional_str(config.get("linear_api_key"))
+    api_key = request_key or saved_key
+    if api_key:
+        try:
+            client = LinearApiClient(api_key)
+            teams = asyncio.run(client.teams())
+            return {"ok": True, "source": "api", "teams": linear_teams_to_json(teams)}
+        except Exception as exc:
+            return linear_teams_error("api", str(exc))
+
+    try:
+        client = LocalLinearClient(
+            Path.cwd(),
+            model=optional_str(payload.get("codex_model")) or optional_str(config.get("codex_model")),
+            reasoning_effort=optional_str(payload.get("codex_reasoning_effort"))
+            or optional_str(config.get("codex_reasoning_effort")),
+            fast_mode=bool_value(payload.get("codex_fast_mode", config.get("codex_fast_mode", False))),
+        )
+        teams = asyncio.run(client.teams(timeout_seconds=20))
+        return {"ok": True, "source": "mcp", "teams": linear_teams_to_json(teams)}
+    except Exception as exc:
+        return linear_teams_error("mcp", str(exc))
+
+
+def merged_config_payload() -> dict[str, object]:
+    config = config_payload_from_env()
+    config.update(read_config_file())
+    return config
+
+
+def linear_teams_to_json(teams: list[LinearTeam]) -> list[dict[str, str]]:
+    return [{"id": team.id, "key": team.key, "name": team.name} for team in teams]
+
+
+def linear_teams_error(source: str, error: str) -> dict[str, object]:
+    return {"ok": False, "source": source, "error": error, "teams": []}
 
 
 def browse_index(raw_path: str) -> dict[str, object]:

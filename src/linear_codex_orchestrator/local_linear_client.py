@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from .codex_cli import ISSUES_SCHEMA, MUTATION_SCHEMA, parse_json_object, run_codex
-from .models import LinearIssue
+from .codex_cli import ISSUES_SCHEMA, MUTATION_SCHEMA, TEAMS_SCHEMA, parse_json_object, run_codex
+from .models import LinearIssue, LinearTeam
 
 
 class LocalLinearClient:
@@ -81,6 +81,37 @@ If there are no matching issues, return {{"issues":[]}}.
                 project_url=item.get("project_url") or "",
             )
             for item in payload["issues"]
+        ]
+
+    async def teams(self, timeout_seconds: int = 20) -> list[LinearTeam]:
+        prompt = """
+Use the configured Linear MCP tools.
+
+List the visible Linear teams only.
+Do not read local files, skills, or repository code. Use only Linear MCP tools.
+Return only JSON matching the provided schema. For each team include:
+id, key, name.
+If there are no visible teams, return {"teams":[]}.
+""".strip()
+        raw = run_codex(
+            prompt,
+            self._cwd,
+            model=self._model,
+            reasoning_effort=self._reasoning_effort,
+            fast_mode=self._fast_mode,
+            sandbox="read-only",
+            output_schema=TEAMS_SCHEMA,
+            timeout_seconds=timeout_seconds,
+            show_output=False,
+        )
+        payload = parse_json_object(raw)
+        return [
+            LinearTeam(
+                id=item["id"],
+                key=str(item["key"]).upper(),
+                name=item["name"],
+            )
+            for item in payload["teams"]
         ]
 
     async def issue_context(self, issue: LinearIssue) -> str:

@@ -102,6 +102,19 @@ export type ConfigResponse = {
   config: OrchestratorConfig;
 };
 
+export type LinearTeam = {
+  id: string;
+  key: string;
+  name: string;
+};
+
+export type LinearTeamsResponse = {
+  ok: boolean;
+  source: "api" | "mcp" | "none";
+  teams: LinearTeam[];
+  error?: string;
+};
+
 export type WorkspaceMap = Record<string, {
   path: string;
   repos: Record<string, {

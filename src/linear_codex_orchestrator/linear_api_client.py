@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .models import LinearIssue
+from .models import LinearIssue, LinearTeam
 
 
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
@@ -61,6 +61,21 @@ query ReadyIssues($first: Int!, $filter: IssueFilter) {
             if issue_matches_labels(node, label, exclude_labels)
         ]
         return issues[:limit]
+
+    async def teams(self) -> list[LinearTeam]:
+        query = """
+query Teams {
+  teams(first: 250) {
+    nodes {
+      id
+      key
+      name
+    }
+  }
+}
+"""
+        payload = await self._graphql(query, {})
+        return [team_from_node(node) for node in payload["teams"]["nodes"]]
 
     async def issue_context(self, issue: LinearIssue) -> str:
         query = """
@@ -237,6 +252,14 @@ def issue_from_node(node: dict[str, Any]) -> LinearIssue:
         labels=tuple(label["name"] for label in node["labels"]["nodes"]),
         project_name=project.get("name") or "",
         project_url=project.get("url") or "",
+    )
+
+
+def team_from_node(node: dict[str, Any]) -> LinearTeam:
+    return LinearTeam(
+        id=str(node["id"]),
+        key=str(node["key"]).upper(),
+        name=str(node["name"]),
     )
 
 
