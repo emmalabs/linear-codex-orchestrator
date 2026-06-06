@@ -50,6 +50,12 @@ from linear_codex_orchestrator.orchestrator import (
 from linear_codex_orchestrator.models import OpenPullRequest, PullRequestFeedback, parse_linear_issue
 from linear_codex_orchestrator.locks import lock_file_is_stale, lock_for_repo
 from linear_codex_orchestrator.prompt_templates import render_prompt
+from linear_codex_orchestrator.run_state import (
+    IssueRunState,
+    clear_issue_run_state,
+    read_issue_run_state,
+    write_issue_run_state,
+)
 from linear_codex_orchestrator.web_server import (
     browse_index,
     github_repo_index,
@@ -1058,7 +1064,8 @@ class CoreTests(unittest.TestCase):
         linear = FakeLinear()
         orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}), linear=linear)
         with patch.object(orchestrator, "dirty_workspace_repos", return_value=["web"]):
-            asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
+            with patch("linear_codex_orchestrator.orchestrator.write_issue_run_state"):
+                asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
 
         self.assertEqual(linear.calls, [])
 
@@ -1115,12 +1122,82 @@ class CoreTests(unittest.TestCase):
         orchestrator._implement = fake_implement  # type: ignore[method-assign]
 
         with patch.object(orchestrator, "dirty_workspace_repos", return_value=[]):
-            with patch("linear_codex_orchestrator.orchestrator.ensure_branch", fake_ensure_branch):
-                with self.assertRaisesRegex(RuntimeError, "stop after implementation starts"):
-                    asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
+            with patch("linear_codex_orchestrator.orchestrator.write_issue_run_state"):
+                with patch("linear_codex_orchestrator.orchestrator.ensure_branch", fake_ensure_branch):
+                    with self.assertRaisesRegex(RuntimeError, "stop after implementation starts"):
+                        asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
 
         self.assertLess(calls.index("ensure_branch"), calls.index("move"))
         self.assertLess(calls.index("move"), calls.index("implement"))
+
+    def test_issue_run_state_round_trips_in_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "config.db"
+            with patch("linear_codex_orchestrator.run_state.config_path", return_value=db_path):
+                write_issue_run_state(
+                    "abc",
+                    "ENG-1",
+                    Path("/tmp/workspace"),
+                    "codex/eng-1-test",
+                    "reviewing",
+                    plan="plan",
+                    implementation_summary="summary",
+                )
+
+                state = read_issue_run_state("abc", Path("/tmp/workspace"))
+                self.assertIsNotNone(state)
+                assert state is not None
+                self.assertEqual(state.issue_identifier, "ENG-1")
+                self.assertEqual(state.branch, "codex/eng-1-test")
+                self.assertEqual(state.stage, "reviewing")
+                self.assertEqual(state.plan, "plan")
+                self.assertEqual(state.implementation_summary, "summary")
+
+                write_issue_run_state(
+                    "abc",
+                    "ENG-1",
+                    Path("/tmp/workspace"),
+                    "codex/eng-1-test",
+                    "optimized",
+                )
+                state = read_issue_run_state("abc", Path("/tmp/workspace"))
+                self.assertIsNotNone(state)
+                assert state is not None
+                self.assertEqual(state.stage, "optimized")
+                self.assertEqual(state.plan, "plan")
+                self.assertEqual(state.implementation_summary, "summary")
+
+                clear_issue_run_state("abc", Path("/tmp/workspace"))
+                self.assertIsNone(read_issue_run_state("abc", Path("/tmp/workspace")))
+
+    def test_commit_phase_changes_commits_only_dirty_changed_repos(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        orchestrator = Orchestrator(Settings(workspace_map={}))
+        commits: list[tuple[Path, str]] = []
+
+        def fake_has_changes(path: Path) -> bool:
+            return path == repo.path
+
+        def fake_commit_all(path: Path, message: str) -> None:
+            commits.append((path, message))
+
+        with patch("linear_codex_orchestrator.orchestrator.has_changes", fake_has_changes):
+            with patch("linear_codex_orchestrator.orchestrator.commit_all", fake_commit_all):
+                orchestrator.commit_phase_changes(issue, {"web": repo}, "optimization")
+
+        self.assertEqual(commits, [(repo.path, "ENG-1: optimization")])
 
     def test_resume_runs_implementation_before_optimization(self) -> None:
         issue = parse_linear_issue(
@@ -1166,11 +1243,76 @@ class CoreTests(unittest.TestCase):
         orchestrator.changed_repos = fake_changed_repos  # type: ignore[method-assign]
 
         with patch.object(orchestrator, "checkout_existing_branch"):
-            with patch("linear_codex_orchestrator.orchestrator.changed_files", return_value=" M file.py"):
-                with self.assertRaisesRegex(RuntimeError, "stop after optimization starts"):
-                    asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=True))
+            with patch.object(orchestrator, "commit_phase_changes"):
+                with patch("linear_codex_orchestrator.orchestrator.read_issue_run_state", return_value=None):
+                    with patch("linear_codex_orchestrator.orchestrator.write_issue_run_state"):
+                        with patch("linear_codex_orchestrator.orchestrator.changed_files", return_value=" M file.py"):
+                            with self.assertRaisesRegex(RuntimeError, "stop after optimization starts"):
+                                asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=True))
 
         self.assertEqual(calls, ["implement", "optimize"])
+
+    def test_resume_from_reviewing_stage_skips_implementation_and_optimization(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Resume review",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": [{"name": "agent-running"}]},
+            }
+        )
+
+        class FakeLinear:
+            async def issue_context(self, _issue: object) -> str:
+                return "context"
+
+            async def comment(self, _issue_id: str, _body: str) -> None:
+                return None
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        run_state = IssueRunState(
+            issue_id="abc",
+            issue_identifier="ENG-1",
+            workspace_path="/tmp/workspace",
+            branch="codex/eng-1-resume-review",
+            stage="reviewing",
+            plan="saved plan",
+            implementation_summary="saved summary",
+        )
+        orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}), linear=FakeLinear())
+        calls: list[str] = []
+
+        async def fake_implement(*_args: object) -> str:
+            calls.append("implement")
+            return "implementation summary"
+
+        async def fake_optimize(*_args: object) -> str:
+            calls.append("optimize")
+            return "optimization summary"
+
+        async def fake_review(*_args: object) -> object:
+            calls.append("review")
+            raise RuntimeError("stop at review")
+
+        orchestrator._implement = fake_implement  # type: ignore[method-assign]
+        orchestrator._optimize = fake_optimize  # type: ignore[method-assign]
+        orchestrator._review = fake_review  # type: ignore[method-assign]
+        orchestrator.changed_repos = lambda _workspace: workspace.repos  # type: ignore[method-assign]
+
+        with patch.object(orchestrator, "checkout_existing_branch"):
+            with patch("linear_codex_orchestrator.orchestrator.read_issue_run_state", return_value=run_state):
+                with patch("linear_codex_orchestrator.orchestrator.write_issue_run_state"):
+                    with self.assertRaisesRegex(RuntimeError, "stop at review"):
+                        asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=True))
+
+        self.assertEqual(calls, ["review"])
 
     def test_resume_plan_continues_partial_implementation(self) -> None:
         plan = resume_plan()
