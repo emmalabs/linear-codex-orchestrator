@@ -648,6 +648,44 @@ class CoreTests(unittest.TestCase):
             }],
         )
 
+    def test_web_browse_index_detects_current_git_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            run_git(tmp_path, "init")
+            run_git(tmp_path, "checkout", "-b", "develop")
+            run_git(tmp_path, "remote", "add", "origin", "git@github.com:acme/product-api.git")
+            summary = browse_index(str(tmp_path))
+        self.assertEqual(
+            summary["current_repository"],
+            {
+                "key": tmp_path.name,
+                "path": str(tmp_path.resolve()),
+                "github": "acme/product-api",
+                "base": "develop",
+            },
+        )
+        self.assertEqual(summary["repositories"], [])
+
+    def test_web_browse_index_returns_current_and_child_git_repositories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            child_path = tmp_path / "product-api"
+            child_path.mkdir()
+            run_git(tmp_path, "init")
+            run_git(child_path, "init")
+            run_git(child_path, "checkout", "-b", "develop")
+            summary = browse_index(str(tmp_path))
+        self.assertEqual(summary["current_repository"]["path"], str(tmp_path.resolve()))
+        self.assertEqual(
+            summary["repositories"],
+            [{
+                "key": "product-api",
+                "path": str(child_path.resolve()),
+                "github": None,
+                "base": "develop",
+            }],
+        )
+
     def test_github_repo_index_parses_accessible_repos(self) -> None:
         completed = type("Completed", (), {
             "stdout": (
