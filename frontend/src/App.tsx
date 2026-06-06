@@ -146,12 +146,6 @@ export function App() {
                   onClick={() => setActiveTab("issues")}
                 />
                 <NavItem
-                  active={activeTab === "workspaces"}
-                  icon={<IconBriefcase size={18} />}
-                  label="Workspaces"
-                  onClick={() => setActiveTab("workspaces")}
-                />
-                <NavItem
                   active={activeTab === "prs"}
                   icon={<IconGitPullRequest size={18} />}
                   label="Pull Requests"
@@ -160,6 +154,12 @@ export function App() {
               </Stack>
             </Stack>
             <Stack gap={4}>
+              <NavItem
+                active={activeTab === "workspaces"}
+                icon={<IconBriefcase size={18} />}
+                label="Workspaces"
+                onClick={() => setActiveTab("workspaces")}
+              />
               <NavItem
                 active={activeTab === "settings"}
                 icon={<IconAdjustments size={18} />}
