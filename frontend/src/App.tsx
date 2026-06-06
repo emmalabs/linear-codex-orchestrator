@@ -234,17 +234,6 @@ export function App() {
   const selectedDetail = detailFromRoute(route, data);
   const activeTab = route.section;
   const step = currentStep(data.orchestration);
-  const activeTitle = selectedDetail
-    ? selectedDetail.kind === "issue"
-      ? selectedDetail.item.identifier || "Issue"
-      : selectedDetail.item.key || "Pull request"
-    : activeTab === "issues"
-    ? "Issues"
-    : activeTab === "prs"
-      ? "Pull Requests"
-      : activeTab === "workspaces"
-        ? "Workspaces"
-        : "Settings";
 
   return (
     <MantineProvider defaultColorScheme="dark" theme={appTheme}>
@@ -256,10 +245,9 @@ export function App() {
         <AppShell.Header>
           <Group className="app-header-content" h="100%" px="md" wrap="nowrap">
             <Box miw={0}>
-              <Title className="app-title" order={1} size="h3">{activeTitle}</Title>
-              <Text c="dimmed" className="topbar-subtitle" size="xs">
-                Command Center
-              </Text>
+              <UnstyledButton className="app-title-link" onClick={() => openSection("issues")}>
+                <Title className="app-title" order={1} size="h3">Codex Orchestrator</Title>
+              </UnstyledButton>
             </Box>
             <Group className="status-group" gap="xs" wrap="nowrap">
               <Badge color={data.connected ? "green" : "red"} variant="light">
@@ -274,10 +262,6 @@ export function App() {
         <AppShell.Navbar className="app-navbar" p="md">
           <Stack className="navbar-content" h="100%" justify="space-between" gap="md">
             <Stack gap="md">
-              <Box className="navbar-brand">
-                <Text fw={900} size="lg">Command Center</Text>
-                <Badge color="dark" radius="sm" size="xs" variant="light">v0.1.0</Badge>
-              </Box>
               <Stack gap={4}>
                 <NavItem
                   active={activeTab === "issues"}

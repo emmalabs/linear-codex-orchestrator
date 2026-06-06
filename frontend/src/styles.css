@@ -71,8 +71,15 @@ body {
   white-space: nowrap;
 }
 
-.topbar-subtitle {
-  display: none;
+.app-title-link {
+  color: var(--mantine-color-text);
+  display: block;
+  text-align: left;
+}
+
+.app-title-link:hover .app-title,
+.app-title-link:focus-visible .app-title {
+  color: var(--mantine-color-blue-2);
 }
 
 .status-group {
@@ -89,12 +96,6 @@ body {
 .app-navbar {
   background: color-mix(in srgb, var(--mantine-color-dark-8) 94%, var(--mantine-color-blue-9));
   border-right-color: color-mix(in srgb, var(--mantine-color-default-border) 76%, transparent);
-}
-
-.navbar-brand {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
 }
 
 .navbar-content {
@@ -947,18 +948,8 @@ body {
     min-height: 0;
   }
 
-  .navbar-brand {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
-  }
-
   .app-title {
     font-size: 18px;
-  }
-
-  .topbar-subtitle {
-    display: block;
   }
 
   .feed-header {
