@@ -28,6 +28,14 @@ import { currentStep } from "./lib/orchestration";
 
 type ActiveSection = "issues" | "workspaces" | "prs" | "settings";
 
+type AppRoute = {
+  detail?: {
+    key: string;
+    kind: SelectedDetail["kind"];
+  };
+  section: ActiveSection;
+};
+
 const appTheme = {
   fontSizes: {
     xs: "14px",
@@ -41,11 +49,9 @@ const appTheme = {
 export function App() {
   const [data, setData] = React.useState<DashboardData>(emptyData);
   const [configResponse, setConfigResponse] = React.useState<ConfigResponse | null>(null);
-  const [activeTab, setActiveTab] = React.useState<ActiveSection>("issues");
-  const [selectedDetail, setSelectedDetail] = React.useState<SelectedDetail | null>(null);
+  const [route, setRoute] = React.useState<AppRoute>(() => routeFromLocation());
   const orchestrationRef = React.useRef<HTMLDivElement | null>(null);
   const shouldFollowRef = React.useRef(true);
-  const detailHistoryRef = React.useRef(false);
 
   const refreshConfig = React.useCallback(async () => {
     const response = await fetch("/api/config", { cache: "no-store" });
@@ -107,30 +113,50 @@ export function App() {
   }, [data.orchestration]);
 
   React.useEffect(() => {
-    const closeDetailFromHistory = () => {
-      detailHistoryRef.current = false;
-      setSelectedDetail(null);
+    const syncRouteFromHistory = () => {
+      setRoute(routeFromLocation());
     };
 
-    window.addEventListener("popstate", closeDetailFromHistory);
-    return () => window.removeEventListener("popstate", closeDetailFromHistory);
+    window.addEventListener("popstate", syncRouteFromHistory);
+    return () => window.removeEventListener("popstate", syncRouteFromHistory);
+  }, []);
+
+  const navigate = React.useCallback((nextRoute: AppRoute, options?: { replace?: boolean }) => {
+    const nextPath = pathFromRoute(nextRoute);
+    const currentPath = `${window.location.pathname}${window.location.search}`;
+    const state = {
+      commandCenterRoute: true,
+      parentPath: nextRoute.detail ? pathFromRoute({ section: nextRoute.section }) : undefined
+    };
+    if (nextPath !== currentPath) {
+      if (options?.replace) {
+        window.history.replaceState(state, "", nextPath);
+      } else {
+        window.history.pushState(state, "", nextPath);
+      }
+    }
+    setRoute(nextRoute);
   }, []);
 
   const openDetail = React.useCallback((detail: SelectedDetail) => {
-    setSelectedDetail(detail);
-    if (!detailHistoryRef.current) {
-      window.history.pushState({ commandCenterDetail: true }, "", window.location.href);
-      detailHistoryRef.current = true;
+    const key = detailKey(detail);
+    if (!key) {
+      return;
     }
-  }, []);
+    navigate({
+      detail: { kind: detail.kind, key },
+      section: detail.kind === "issue" ? "issues" : "prs"
+    });
+  }, [navigate]);
 
   const closeDetail = React.useCallback(() => {
-    if (detailHistoryRef.current) {
+    const parentPath = window.history.state?.parentPath;
+    if (typeof parentPath === "string" && parentPath === pathFromRoute({ section: route.section })) {
       window.history.back();
       return;
     }
-    setSelectedDetail(null);
-  }, []);
+    navigate({ section: route.section });
+  }, [navigate, route.section]);
 
   const archiveDetail = React.useCallback(async (detail: SelectedDetail) => {
     const key = detail.kind === "issue" ? detail.item.identifier : detail.item.key;
@@ -157,21 +183,17 @@ export function App() {
       issues: payload.status?.issues ?? current.issues.filter((issue) => issue.identifier !== key),
       prs: payload.status?.prs ?? current.prs.filter((pr) => pr.key !== key)
     }));
-    setSelectedDetail((current) => {
-      if (!current) {
-        return current;
-      }
-      const currentKey = current.kind === "issue" ? current.item.identifier : current.item.key;
-      return current.kind === detail.kind && currentKey === key ? null : current;
-    });
-  }, []);
+    if (route.detail?.kind === detail.kind && route.detail.key === key) {
+      navigate({ section: route.section }, { replace: true });
+    }
+  }, [navigate, route.detail, route.section]);
 
   const openSection = React.useCallback((section: ActiveSection) => {
-    detailHistoryRef.current = false;
-    setSelectedDetail(null);
-    setActiveTab(section);
-  }, []);
+    navigate({ section });
+  }, [navigate]);
 
+  const selectedDetail = detailFromRoute(route, data);
+  const activeTab = route.section;
   const step = currentStep(data.orchestration);
   const activeTitle = selectedDetail
     ? selectedDetail.kind === "issue"
@@ -331,4 +353,59 @@ function NavItem(props: {
       </Group>
     </UnstyledButton>
   );
+}
+
+function routeFromLocation(): AppRoute {
+  const segments = window.location.pathname.split("/").filter(Boolean);
+  const [sectionSegment, ...detailSegments] = segments;
+  const detailKey = detailSegments.length ? decodeURIComponent(detailSegments.join("/")) : undefined;
+  if (sectionSegment === "pull-requests") {
+    return detailKey
+      ? { section: "prs", detail: { kind: "pr", key: detailKey } }
+      : { section: "prs" };
+  }
+  if (sectionSegment === "workspaces") {
+    return { section: "workspaces" };
+  }
+  if (sectionSegment === "settings") {
+    return { section: "settings" };
+  }
+  return detailKey
+    ? { section: "issues", detail: { kind: "issue", key: detailKey } }
+    : { section: "issues" };
+}
+
+function pathFromRoute(route: AppRoute) {
+  const base = route.section === "prs"
+    ? "/pull-requests"
+    : route.section === "workspaces"
+      ? "/workspaces"
+      : route.section === "settings"
+        ? "/settings"
+        : "/issues";
+  return route.detail ? `${base}/${encodeURIComponent(route.detail.key)}` : base;
+}
+
+function detailFromRoute(route: AppRoute, data: DashboardData): SelectedDetail | null {
+  if (!route.detail) {
+    return null;
+  }
+  if (route.detail.kind === "issue") {
+    const issue = data.issues.find((item) => issueKey(item) === route.detail?.key);
+    return issue ? { kind: "issue", item: issue } : null;
+  }
+  const pr = data.prs.find((item) => prKey(item) === route.detail?.key);
+  return pr ? { kind: "pr", item: pr } : null;
+}
+
+function detailKey(detail: SelectedDetail) {
+  return detail.kind === "issue" ? issueKey(detail.item) : prKey(detail.item);
+}
+
+function issueKey(issue: IssueStatus) {
+  return issue.identifier ?? issue.url ?? issue.title;
+}
+
+function prKey(pr: PullRequestStatus) {
+  return pr.key ?? pr.url ?? pr.title;
 }

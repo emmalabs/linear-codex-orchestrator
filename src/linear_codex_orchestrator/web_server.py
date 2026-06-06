@@ -82,6 +82,9 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             return
         if self._send_frontend_asset(path):
             return
+        if not Path(path).name or "." not in Path(path).name:
+            self._send_frontend_index()
+            return
         self.send_error(404)
 
     def do_POST(self) -> None:
