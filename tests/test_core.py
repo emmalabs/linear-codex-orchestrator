@@ -1029,6 +1029,99 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(seen, [("ENG-2", False)])
 
+    def test_new_issue_skips_dirty_workspace_before_linear_mutations(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Start me",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+
+        class FakeLinear:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def issue_context(self, _issue: object) -> str:
+                self.calls.append("issue_context")
+                return "context"
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        linear = FakeLinear()
+        orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}), linear=linear)
+        with patch.object(orchestrator, "dirty_workspace_repos", return_value=["web"]):
+            asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
+
+        self.assertEqual(linear.calls, [])
+
+    def test_new_issue_prepares_branch_before_moving_to_in_progress(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Start me",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        calls: list[str] = []
+
+        class FakeLinear:
+            async def issue_context(self, _issue: object) -> str:
+                calls.append("issue_context")
+                return "context"
+
+            async def comment(self, _issue_id: str, _body: str) -> None:
+                calls.append("comment")
+
+            async def move_issue(self, _issue_id: str, _status_name: str) -> None:
+                calls.append("move")
+
+            async def add_label(self, _issue_id: str, _label_name: str) -> None:
+                calls.append("add_label")
+
+            async def remove_label(self, _issue_id: str, _label_name: str) -> None:
+                calls.append("remove_label")
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}), linear=FakeLinear())
+
+        async def fake_plan(*_args: object) -> str:
+            calls.append("plan")
+            return "plan"
+
+        async def fake_implement(*_args: object) -> str:
+            calls.append("implement")
+            raise RuntimeError("stop after implementation starts")
+
+        def fake_ensure_branch(*_args: object) -> None:
+            calls.append("ensure_branch")
+
+        orchestrator._plan = fake_plan  # type: ignore[method-assign]
+        orchestrator._implement = fake_implement  # type: ignore[method-assign]
+
+        with patch.object(orchestrator, "dirty_workspace_repos", return_value=[]):
+            with patch("linear_codex_orchestrator.orchestrator.ensure_branch", fake_ensure_branch):
+                with self.assertRaisesRegex(RuntimeError, "stop after implementation starts"):
+                    asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
+
+        self.assertLess(calls.index("ensure_branch"), calls.index("move"))
+        self.assertLess(calls.index("move"), calls.index("implement"))
+
     def test_resume_runs_implementation_before_optimization(self) -> None:
         issue = parse_linear_issue(
             {
