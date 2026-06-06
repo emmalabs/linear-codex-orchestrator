@@ -48,11 +48,6 @@ body {
   min-height: 0;
 }
 
-.new-issue-button {
-  background: var(--mantine-color-blue-6);
-  border-radius: 8px;
-}
-
 .nav-item {
   align-items: center;
   border: 1px solid transparent;

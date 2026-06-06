@@ -5,15 +5,13 @@ import {
   IconBrandGithub,
   IconBriefcase,
   IconGitPullRequest,
-  IconListDetails,
-  IconPlus
+  IconListDetails
 } from "@tabler/icons-react";
 import {
   Anchor,
   AppShell,
   Badge,
   Box,
-  Button,
   Group,
   MantineProvider,
   Stack,
@@ -135,9 +133,6 @@ export function App() {
                 <Text fw={900} size="lg">Command Center</Text>
                 <Badge color="dark" radius="sm" size="xs" variant="light">v0.1.0</Badge>
               </Box>
-              <Button className="new-issue-button" leftSection={<IconPlus size={15} />} variant="filled">
-                New Issue
-              </Button>
               <Stack gap={4}>
                 <NavItem
                   active={activeTab === "issues"}
