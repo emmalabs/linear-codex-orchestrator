@@ -151,7 +151,7 @@ export function SetupView(props: {
           }),
           signal: controller.signal
         });
-        const payload = await response.json() as LinearTeamsResponse;
+        const payload = await readLinearTeamsResponse(response);
         if (!response.ok) {
           throw new Error(payload.error || "Failed to load Linear teams.");
         }
@@ -341,6 +341,19 @@ function SettingsGroup(props: { title: string; children: React.ReactNode }) {
 
 function configPayload(draft: OrchestratorConfig, workspaces: WorkspaceDraft[]): OrchestratorConfig {
   return cleanConfig({ ...draft, workspace_map: workspaceMapFromDraft(workspaces) });
+}
+
+async function readLinearTeamsResponse(response: Response): Promise<LinearTeamsResponse> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return {
+      ok: false,
+      source: "none",
+      teams: [],
+      error: "Linear team lookup endpoint is unavailable."
+    };
+  }
+  return await response.json() as LinearTeamsResponse;
 }
 
 function SettingRow(props: {
