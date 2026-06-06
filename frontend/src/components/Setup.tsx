@@ -33,6 +33,7 @@ import {
   UnstyledButton
 } from "@mantine/core";
 import type {
+  BrowseRepository,
   BrowseResponse,
   ConfigResponse,
   FolderPickerTarget,
@@ -530,7 +531,7 @@ function RepoEditor(props: {
 
 function mergeDetectedRepos(
   existing: RepoDraft[],
-  detected: NonNullable<BrowseResponse["repositories"]>
+  detected: BrowseRepository[]
 ): RepoDraft[] {
   const usedKeys = new Set(existing.map((repo) => repo.key));
   const detectedByPath = new Map(detected.map((repo) => [repo.path, repo]));
