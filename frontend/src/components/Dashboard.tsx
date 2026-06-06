@@ -257,26 +257,6 @@ function RightRail(props: {
   const step = currentStep(props.data.orchestration);
   return (
     <Stack className="right-rail" gap="md">
-      <Paper withBorder className="rail-panel" p="md">
-        <Group justify="space-between" mb="sm">
-          <Text fw={800}>System Context</Text>
-          <Badge color={props.data.connected ? "green" : "red"} variant="light">
-            {props.data.connected ? "Live" : "Offline"}
-          </Badge>
-        </Group>
-        <SimpleGrid cols={2} spacing="xs">
-          <ContextTile label="Active Issues" value={props.data.issues.length} />
-          <ContextTile label="Tasks" value={props.data.tasks.length} />
-          <ContextTile label="Daemon" value={props.data.connected ? "Live" : "Offline"} />
-          <ContextTile label="Refresh" value={props.data.refreshedAt.toLocaleTimeString()} />
-        </SimpleGrid>
-        <Box className="current-step" mt="sm">
-          <Text c="dimmed" fw={700} size="xs" tt="uppercase">Current step</Text>
-          <Text fw={750} size="sm">{step.label}</Text>
-          <Text c="dimmed" className="truncate" size="xs">{step.detail}</Text>
-        </Box>
-      </Paper>
-
       <LiveActivityPanel currentStepLabel={step.label} tasks={props.data.tasks} />
 
       <Paper withBorder className="rail-panel log-panel" p="md">
@@ -297,15 +277,6 @@ function RightRail(props: {
         </div>
       </Paper>
     </Stack>
-  );
-}
-
-function ContextTile(props: { label: string; value: string | number }) {
-  return (
-    <Box className="context-tile">
-      <Text c="dimmed" fw={700} size="xs" tt="uppercase">{props.label}</Text>
-      <Text className="context-tile-value" fw={800}>{props.value}</Text>
-    </Box>
   );
 }
 

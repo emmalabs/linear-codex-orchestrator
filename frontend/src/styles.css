@@ -48,6 +48,25 @@ body {
   min-height: 0;
 }
 
+.sidebar-status {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 58%, transparent);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.sidebar-status-metrics {
+  align-items: stretch;
+}
+
+.sidebar-status-metric {
+  background: color-mix(in srgb, var(--mantine-color-dark-6) 58%, transparent);
+  border-radius: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 7px 8px;
+}
+
 .nav-item {
   align-items: center;
   border: 1px solid transparent;
@@ -465,20 +484,6 @@ body {
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-}
-
-.context-tile,
-.current-step {
-  background: color-mix(in srgb, var(--mantine-color-dark-6) 64%, transparent);
-  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 58%, transparent);
-  border-radius: 8px;
-  padding: 10px;
-}
-
-.context-tile-value {
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-  margin-top: 2px;
 }
 
 .live-activity-panel {

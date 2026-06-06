@@ -24,6 +24,7 @@ import { emptyData } from "./types";
 import { DashboardView } from "./components/Dashboard";
 import { SetupView } from "./components/Setup";
 import { DetailPage } from "./components/Detail";
+import { currentStep } from "./lib/orchestration";
 
 type ActiveSection = "issues" | "workspaces" | "prs" | "settings";
 
@@ -94,6 +95,7 @@ export function App() {
     }
   }, [data.orchestration]);
 
+  const step = currentStep(data.orchestration);
   const activeTitle = selectedDetail
     ? selectedDetail.kind === "issue"
       ? selectedDetail.item.identifier || "Issue"
@@ -137,6 +139,7 @@ export function App() {
                 <Text fw={900} size="lg">Command Center</Text>
                 <Badge color="dark" radius="sm" size="xs" variant="light">v0.1.0</Badge>
               </Box>
+              <SidebarStatus data={data} step={step} />
               <Stack gap={4}>
                 <NavItem
                   active={activeTab === "issues"}
@@ -219,6 +222,32 @@ export function App() {
         </AppShell.Main>
       </AppShell>
     </MantineProvider>
+  );
+}
+
+function SidebarStatus(props: { data: DashboardData; step: { label: string; detail: string } }) {
+  return (
+    <Box className="sidebar-status">
+      <Group justify="space-between" gap="xs" mb={6} wrap="nowrap">
+        <Text c="dimmed" fw={800} size="xs" tt="uppercase">Status</Text>
+        <Badge color={props.data.connected ? "green" : "red"} size="xs" variant="light">
+          {props.data.connected ? "Live" : "Offline"}
+        </Badge>
+      </Group>
+      <Text fw={800} size="sm">{props.step.label}</Text>
+      <Text c="dimmed" className="truncate" size="xs" title={props.step.detail}>{props.step.detail}</Text>
+      <Group className="sidebar-status-metrics" gap="xs" mt="sm" wrap="nowrap">
+        <Box className="sidebar-status-metric">
+          <Text c="dimmed" fw={700} size="xs" tt="uppercase">Issues</Text>
+          <Text fw={800} size="sm">{props.data.issues.length}</Text>
+        </Box>
+        <Box className="sidebar-status-metric">
+          <Text c="dimmed" fw={700} size="xs" tt="uppercase">Tasks</Text>
+          <Text fw={800} size="sm">{props.data.tasks.length}</Text>
+        </Box>
+      </Group>
+      <Text c="dimmed" mt={6} size="xs">Refresh {props.data.refreshedAt.toLocaleTimeString()}</Text>
+    </Box>
   );
 }
 
