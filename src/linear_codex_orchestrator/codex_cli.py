@@ -67,6 +67,28 @@ MUTATION_SCHEMA = {
 }
 
 
+TEAMS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "teams": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": "string"},
+                    "key": {"type": "string"},
+                    "name": {"type": "string"},
+                },
+                "required": ["id", "key", "name"],
+            },
+        }
+    },
+    "required": ["teams"],
+}
+
+
 def run_codex(
     prompt: str,
     cwd: Path,

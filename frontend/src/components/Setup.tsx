@@ -37,6 +37,7 @@ import type {
   BrowseResponse,
   ConfigResponse,
   FolderPickerTarget,
+  LinearTeamsResponse,
   OrchestratorConfig,
   RepoDraft,
   WorkspaceDraft
@@ -53,6 +54,15 @@ import {
 
 type SetupSection = "workspaces" | "orchestrator";
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+type TeamLookupState = {
+  loading: boolean;
+  response: LinearTeamsResponse | null;
+  error: string | null;
+};
+type LinearTeamOption = {
+  value: string;
+  label: string;
+};
 
 export function SetupView(props: {
   configResponse: ConfigResponse | null;
@@ -62,6 +72,11 @@ export function SetupView(props: {
   const [workspaces, setWorkspaces] = React.useState<WorkspaceDraft[]>([]);
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>("idle");
   const [error, setError] = React.useState<string | null>(null);
+  const [teamLookup, setTeamLookup] = React.useState<TeamLookupState>({
+    loading: false,
+    response: null,
+    error: null
+  });
   const [pickerTarget, setPickerTarget] = React.useState<FolderPickerTarget | null>(null);
   const hydratedRef = React.useRef(false);
   const lastSavedPayloadRef = React.useRef("");
@@ -118,7 +133,53 @@ export function SetupView(props: {
     return () => window.clearTimeout(timer);
   }, [currentPayload, currentPayloadJson, savePayload]);
 
-  const repoCount = workspaces.reduce((total, workspace) => total + workspace.repos.length, 0);
+  React.useEffect(() => {
+    if (!hydratedRef.current || props.section !== "workspaces") {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setTeamLookup((current) => ({ ...current, loading: true, error: null }));
+      try {
+        const response = await fetch("/api/linear/teams", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            linear_api_key: draft.linear_api_key ?? "",
+            codex_model: draft.codex_model ?? "",
+            codex_reasoning_effort: draft.codex_reasoning_effort ?? "",
+            codex_fast_mode: Boolean(draft.codex_fast_mode)
+          }),
+          signal: controller.signal
+        });
+        const payload = await readLinearTeamsResponse(response);
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to load Linear teams.");
+        }
+        setTeamLookup({ loading: false, response: payload, error: payload.ok ? null : payload.error || "Linear team lookup failed." });
+      } catch (lookupError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setTeamLookup({
+          loading: false,
+          response: null,
+          error: lookupError instanceof Error ? lookupError.message : "Linear team lookup failed."
+        });
+      }
+    }, 300);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [
+    draft.codex_fast_mode,
+    draft.codex_model,
+    draft.codex_reasoning_effort,
+    draft.linear_api_key,
+    props.section
+  ]);
+
   const pageTitle = props.section === "workspaces" ? "Workspaces" : "Orchestrator";
   const pageDescription = props.section === "workspaces"
     ? "Map Linear teams to local folders and GitHub repositories."
@@ -159,6 +220,7 @@ export function SetupView(props: {
                   <WorkspaceEditor
                     key={workspace.id}
                     onBrowse={(target) => setPickerTarget(target)}
+                    teamLookup={teamLookup}
                     workspace={workspace}
                     onChange={(next) => setWorkspaces((current) => current.map((item) => item.id === next.id ? next : item))}
                     onRemove={() => setWorkspaces((current) => current.filter((item) => item.id !== workspace.id))}
@@ -282,6 +344,19 @@ function configPayload(draft: OrchestratorConfig, workspaces: WorkspaceDraft[]):
   return cleanConfig({ ...draft, workspace_map: workspaceMapFromDraft(workspaces) });
 }
 
+async function readLinearTeamsResponse(response: Response): Promise<LinearTeamsResponse> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return {
+      ok: false,
+      source: "none",
+      teams: [],
+      error: "Linear team lookup endpoint is unavailable."
+    };
+  }
+  return await response.json() as LinearTeamsResponse;
+}
+
 function SettingRow(props: {
   label: string;
   description?: string;
@@ -362,6 +437,7 @@ function EmptyState(props: { icon: React.ReactNode; text: string }) {
 
 function WorkspaceEditor(props: {
   workspace: WorkspaceDraft;
+  teamLookup: TeamLookupState;
   onChange: (workspace: WorkspaceDraft) => void;
   onBrowse: (target: FolderPickerTarget) => void;
   onRemove: () => void;
@@ -377,6 +453,9 @@ function WorkspaceEditor(props: {
     });
   };
   const repoCount = props.workspace.repos.length;
+  const teamOptions = linearTeamOptions(props.teamLookup.response, props.workspace.teamKey);
+  const teamLookupUsable = linearTeamsAvailable(props.teamLookup.response, teamOptions);
+  const teamLookupMessage = linearTeamLookupMessage(props.teamLookup);
   return (
     <Box className="workspace-block">
       <Group className="workspace-block-header" justify="space-between" gap="sm" wrap="nowrap">
@@ -393,7 +472,21 @@ function WorkspaceEditor(props: {
       </Group>
       <Paper withBorder className="settings-card">
         <SettingRow label="Linear team key" description="Linear team key that maps issues to this workspace.">
-          <TextInput aria-label="Linear team key" value={props.workspace.teamKey} onChange={(event) => update({ teamKey: event.currentTarget.value.toUpperCase() })} placeholder="e.g. EMMA" />
+          <Stack gap={4}>
+            {teamLookupUsable ? (
+              <Select
+                aria-label="Linear team key"
+                data={teamOptions}
+                onChange={(value) => update({ teamKey: normalizedTeamKey(value ?? "") })}
+                placeholder="Select a Linear team"
+                searchable
+                value={props.workspace.teamKey || null}
+              />
+            ) : (
+              <TextInput aria-label="Linear team key" value={props.workspace.teamKey} onChange={(event) => update({ teamKey: normalizedTeamKey(event.currentTarget.value) })} placeholder="e.g. EMMA" />
+            )}
+            {teamLookupMessage ? <Text c="dimmed" size="xs">{teamLookupMessage}</Text> : null}
+          </Stack>
         </SettingRow>
         <SettingRow label="Workspace folder" description="Parent folder that contains the checked-out repositories.">
           <Group gap="xs" wrap="nowrap">
@@ -446,6 +539,42 @@ function WorkspaceEditor(props: {
       </Paper>
     </Box>
   );
+}
+
+function linearTeamOptions(response: LinearTeamsResponse | null, currentTeamKey: string): LinearTeamOption[] {
+  const options = (response?.ok ? response.teams : []).map((team) => ({
+    value: normalizedTeamKey(team.key),
+    label: `${normalizedTeamKey(team.key)} - ${team.name}`
+  }));
+  const currentKey = normalizedTeamKey(currentTeamKey);
+  if (currentKey && !options.some((option) => option.value === currentKey)) {
+    options.push({ value: currentKey, label: `${currentKey} - configured manually` });
+  }
+  return options.sort((left, right) => left.value.localeCompare(right.value));
+}
+
+function linearTeamsAvailable(response: LinearTeamsResponse | null, options: LinearTeamOption[]): boolean {
+  return Boolean(response?.ok && response.teams.length && options.length);
+}
+
+function normalizedTeamKey(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function linearTeamLookupMessage(lookup: TeamLookupState): string {
+  if (lookup.loading) {
+    return "Loading Linear teams...";
+  }
+  if (lookup.response?.ok && lookup.response.source === "mcp") {
+    return "Using Linear MCP fallback.";
+  }
+  if (lookup.error) {
+    return `${lookup.error} Manual entry is available.`;
+  }
+  if (lookup.response && !lookup.response.ok) {
+    return `${lookup.response.error || "Linear team lookup failed."} Manual entry is available.`;
+  }
+  return "";
 }
 
 function RepoEditor(props: {
