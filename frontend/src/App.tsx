@@ -97,7 +97,7 @@ export function App() {
   }, [data.orchestration]);
 
   const activeTitle = activeTab === "issues"
-    ? "Linear Issues"
+    ? "Issues"
     : activeTab === "prs"
       ? "Pull Requests"
       : activeTab === "workspaces"
@@ -142,7 +142,7 @@ export function App() {
                 <NavItem
                   active={activeTab === "issues"}
                   icon={<IconListDetails size={18} />}
-                  label="Linear Issues"
+                  label="Issues"
                   onClick={() => setActiveTab("issues")}
                 />
                 <NavItem

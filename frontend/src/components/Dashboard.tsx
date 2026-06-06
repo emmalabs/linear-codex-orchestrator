@@ -89,10 +89,10 @@ function FeedPanel(props: {
       <Group className="feed-header" align="flex-start" justify="space-between" gap="md">
         <Box>
           <Text className="feed-kicker" fw={700} size="xs" tt="uppercase">
-            {props.mode === "issues" ? "Linear Issues" : "Pull Requests"}
+            {props.mode === "issues" ? "Issues" : "Pull Requests"}
           </Text>
           <Text fw={800} size="xl">
-            {props.mode === "issues" ? "Linear Issues Feed" : "Pull Requests Feed"}
+            {props.mode === "issues" ? "Issues Feed" : "Pull Requests Feed"}
           </Text>
         </Box>
         <Group className="feed-filters" gap={6}>
