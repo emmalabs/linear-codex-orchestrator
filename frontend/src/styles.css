@@ -390,7 +390,7 @@ body {
 }
 
 .context-text {
-  max-width: 220px;
+  max-width: 100%;
 }
 
 .formatted-log-message {

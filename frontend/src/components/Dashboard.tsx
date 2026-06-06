@@ -175,7 +175,9 @@ function IssueItem({ issue, onOpen }: { issue: IssueStatus; onOpen: () => void }
         <Text className="truncate context-text" c="dimmed" size="sm" title={issue.project || "No project"}>
           {issue.project || "No project"}
         </Text>
-        <Text c="dimmed" size="xs">{issue.updated_at || ""}</Text>
+        <Text className="truncate context-text" c="dimmed" size="xs" title={issue.updated_at || ""}>
+          {issue.updated_at || ""}
+        </Text>
       </Stack>
     </UnstyledRow>
   );
