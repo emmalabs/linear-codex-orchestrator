@@ -5,6 +5,7 @@ import mimetypes
 import re
 import subprocess
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -95,6 +96,9 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/status/archive":
             self._archive_status()
             return
+        if path == "/api/status/update":
+            self._update_status()
+            return
         self.send_error(404)
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -178,6 +182,30 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(400, str(exc))
             return
         self._send_json({"ok": True, "archived": archived, "status": status_index()})
+
+    def _update_status(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 1024 * 32:
+                self._send_error_json(413, "Status payload is too large.")
+                return
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Status payload must be a JSON object.")
+            kind = payload.get("kind")
+            key = payload.get("key")
+            status = payload.get("status")
+            if kind not in {"issue", "pr"}:
+                raise ValueError('Status kind must be "issue" or "pr".')
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("Status key is required.")
+            if not isinstance(status, str) or not status.strip():
+                raise ValueError("Status value is required.")
+            updated = update_status_item(kind, key.strip(), status.strip())
+        except (json.JSONDecodeError, RuntimeError, ValueError) as exc:
+            self._send_error_json(400, str(exc))
+            return
+        self._send_json({"ok": True, "updated": updated, "status": status_index()})
 
     def _send_log(self, raw_name: str) -> None:
         try:
@@ -490,6 +518,22 @@ def archive_status_item(kind: str, key: str) -> bool:
     collection.pop(key, None)
     write_status_payload(payload)
     return existed
+
+
+def update_status_item(kind: str, key: str, status: str) -> bool:
+    payload = read_status_payload()
+    collection_key = "issues" if kind == "issue" else "prs"
+    collection = payload.get(collection_key, {})
+    if not isinstance(collection, dict):
+        collection = {}
+        payload[collection_key] = collection
+    current = collection.get(key)
+    if not isinstance(current, dict):
+        return False
+    current["status"] = status
+    current["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    write_status_payload(payload)
+    return True
 
 
 def read_status_payload() -> dict[str, object]:

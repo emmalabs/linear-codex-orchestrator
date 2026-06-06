@@ -70,6 +70,7 @@ from linear_codex_orchestrator.web_server import (
     task_index,
     tail_text,
     config_index,
+    update_status_item,
 )
 
 
@@ -611,6 +612,22 @@ class CoreTests(unittest.TestCase):
                 summary = status_index()
         self.assertEqual(summary["issues"], [])
         self.assertEqual(summary["prs"], [])
+
+    def test_update_status_item_changes_status_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                (tmp_path / "status.json").write_text(
+                    '{"issues":{"ENG-1":{"identifier":"ENG-1","status":"Ready"}},'
+                    '"prs":{"acme/web#1":{"key":"acme/web#1","status":"Open"}}}',
+                    encoding="utf-8",
+                )
+                self.assertTrue(update_status_item("issue", "ENG-1", "Done"))
+                self.assertTrue(update_status_item("pr", "acme/web#1", "Merged"))
+                self.assertFalse(update_status_item("issue", "ENG-2", "Done"))
+                summary = status_index()
+        self.assertEqual(summary["issues"][0]["status"], "Done")
+        self.assertEqual(summary["prs"][0]["status"], "Merged")
 
     def test_web_config_index_reads_sqlite_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

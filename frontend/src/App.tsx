@@ -188,6 +188,33 @@ export function App() {
     }
   }, [navigate, route.detail, route.section]);
 
+  const updateDetailStatus = React.useCallback(async (detail: SelectedDetail, status: string) => {
+    const key = detail.kind === "issue" ? detail.item.identifier : detail.item.key;
+    if (!key) {
+      throw new Error("This item cannot be updated because it has no stable key.");
+    }
+    const response = await fetch("/api/status/update", {
+      body: JSON.stringify({ kind: detail.kind, key, status }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(payload.error || "Unable to update item status.");
+    }
+    const payload = await response.json() as {
+      status?: {
+        issues?: IssueStatus[];
+        prs?: PullRequestStatus[];
+      };
+    };
+    setData((current) => ({
+      ...current,
+      issues: payload.status?.issues ?? current.issues.map((issue) => issue.identifier === key ? { ...issue, status } : issue),
+      prs: payload.status?.prs ?? current.prs.map((pr) => pr.key === key ? { ...pr, status } : pr)
+    }));
+  }, []);
+
   const openSection = React.useCallback((section: ActiveSection) => {
     navigate({ section });
   }, [navigate]);
@@ -284,7 +311,9 @@ export function App() {
             {selectedDetail ? (
               <DetailPage
                 detail={selectedDetail}
+                onArchive={archiveDetail}
                 onBack={closeDetail}
+                onStatusChange={updateDetailStatus}
                 tasks={data.tasks}
               />
             ) : (

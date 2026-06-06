@@ -1,7 +1,7 @@
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { IconArrowLeft, IconBrandGithub, IconExternalLink, IconFolder } from "@tabler/icons-react";
+import { IconArchive, IconArrowLeft, IconBrandGithub, IconExternalLink, IconFolder } from "@tabler/icons-react";
 import {
   Accordion,
   Badge,
@@ -9,6 +9,7 @@ import {
   Button,
   Group,
   Paper,
+  Select,
   Stack,
   Table,
   Text,
@@ -23,8 +24,24 @@ import { ExternalLink, StatusPill } from "./common";
 export function DetailPage(props: {
   detail: SelectedDetail;
   tasks: TaskLog[];
+  onArchive: (detail: SelectedDetail) => Promise<void>;
   onBack: () => void;
+  onStatusChange: (detail: SelectedDetail, status: string) => Promise<void>;
 }) {
+  const [isArchiving, setIsArchiving] = React.useState(false);
+  const archiveDetail = async () => {
+    const confirmed = window.confirm(`Archive ${key} from the dashboard?`);
+    if (!confirmed) {
+      return;
+    }
+    setIsArchiving(true);
+    try {
+      await props.onArchive(props.detail);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to archive item.");
+      setIsArchiving(false);
+    }
+  };
   const matchingTasks = tasksForDetail(props.detail, props.tasks);
   const title = props.detail.kind === "issue"
     ? props.detail.item.title || "Untitled issue"
@@ -38,7 +55,19 @@ export function DetailPage(props: {
         <Button leftSection={<IconArrowLeft size={15} />} onClick={props.onBack} size="xs" variant="subtle">
           Back
         </Button>
-        <Text c="dimmed" size="xs">{props.detail.kind === "issue" ? "Issue" : "Pull request"}</Text>
+        <Group gap="xs">
+          <Button
+            color="red"
+            leftSection={<IconArchive size={14} />}
+            loading={isArchiving}
+            onClick={archiveDetail}
+            size="xs"
+            variant="subtle"
+          >
+            Archive
+          </Button>
+          <Text c="dimmed" size="xs">{props.detail.kind === "issue" ? "Issue" : "Pull request"}</Text>
+        </Group>
       </Group>
 
       <Box className="detail-layout">
@@ -50,7 +79,10 @@ export function DetailPage(props: {
                 <StatusPill status={props.detail.item.status} />
               </Group>
               <Title className="detail-title" order={1}>{title}</Title>
-              <DetailActions detail={props.detail} />
+              <DetailActions
+                detail={props.detail}
+                onStatusChange={(status) => props.onStatusChange(props.detail, status)}
+              />
             </Stack>
           </Paper>
 
@@ -77,25 +109,86 @@ export function DetailPage(props: {
   );
 }
 
-function DetailActions({ detail }: { detail: SelectedDetail }) {
+function DetailActions({ detail, onStatusChange }: {
+  detail: SelectedDetail;
+  onStatusChange: (status: string) => Promise<void>;
+}) {
+  const [isUpdating, setIsUpdating] = React.useState(false);
+  const [statusValue, setStatusValue] = React.useState(detail.item.status || "");
+  React.useEffect(() => {
+    setStatusValue(detail.item.status || "");
+  }, [detail.item.status]);
+
+  const updateStatus = async (value: string | null) => {
+    if (!value || value === statusValue) {
+      return;
+    }
+    const previous = statusValue;
+    setStatusValue(value);
+    setIsUpdating(true);
+    try {
+      await onStatusChange(value);
+    } catch (error) {
+      setStatusValue(previous);
+      window.alert(error instanceof Error ? error.message : "Unable to update item status.");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const statusOptions = statusOptionsFor(detail);
+
   if (detail.kind === "issue") {
     const issue = detail.item;
     const prs = issuePullRequests(issue);
     return (
-      <Group gap="xs">
+      <Group gap="xs" wrap="wrap">
+        <Select
+          aria-label="Status"
+          className="detail-status-select"
+          data={statusOptions}
+          disabled={isUpdating}
+          onChange={updateStatus}
+          searchable
+          size="xs"
+          value={statusValue}
+        />
         {prs[0] ? <Button component="a" href={prs[0]} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
         {issue.project_url ? <Button component="a" href={issue.project_url} leftSection={<IconFolder size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">Project</Button> : null}
         {issue.url ? <Button component="a" href={issue.url} leftSection={<IconExternalLink size={14} />} target="_blank" rel="noopener noreferrer" size="xs">Linear</Button> : null}
       </Group>
     );
   }
-  return detail.item.url ? (
-    <Group>
-      <Button component="a" href={detail.item.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">
-        GitHub
-      </Button>
+  return (
+    <Group gap="xs" wrap="wrap">
+      <Select
+        aria-label="Status"
+        className="detail-status-select"
+        data={statusOptions}
+        disabled={isUpdating}
+        onChange={updateStatus}
+        searchable
+        size="xs"
+        value={statusValue}
+      />
+      {detail.item.url ? (
+        <Button component="a" href={detail.item.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">
+          GitHub
+        </Button>
+      ) : null}
     </Group>
-  ) : null;
+  );
+}
+
+function statusOptionsFor(detail: SelectedDetail) {
+  const base = detail.kind === "issue"
+    ? ["Starting", "Planning", "Implementing", "Reviewing", "PR ready", "Done", "Blocked", "Failed"]
+    : ["Open", "Ready", "No new feedback", "Feedback found", "Fixing feedback", "Merged", "Closed"];
+  return uniqueValues([detail.item.status, ...base].filter(Boolean) as string[]);
+}
+
+function uniqueValues(values: string[]) {
+  return [...new Set(values)].map((value) => ({ value, label: value }));
 }
 
 function IssueRepositories({ issue }: { issue: IssueStatus }) {
