@@ -505,20 +505,28 @@ def status_index() -> dict[str, object]:
             payload = json.load(handle)
     except (FileNotFoundError, json.JSONDecodeError):
         payload = {}
-    issues = payload.get("issues", {})
-    prs = payload.get("prs", {})
     return {
         "issues": sorted(
-            issues.values() if isinstance(issues, dict) else [],
+            _status_values(payload, "issues"),
             key=lambda item: str(item.get("updated_at", "")),
             reverse=True,
         ),
         "prs": sorted(
-            prs.values() if isinstance(prs, dict) else [],
+            _status_values(payload, "prs"),
             key=lambda item: str(item.get("updated_at", "")),
             reverse=True,
         ),
+        "archived_prs": sorted(
+            _status_values(payload, "archived_prs"),
+            key=lambda item: str(item.get("archived_at") or item.get("updated_at", "")),
+            reverse=True,
+        ),
     }
+
+
+def _status_values(payload: dict[str, object], key: str) -> list[dict[str, object]]:
+    value = payload.get(key, {})
+    return list(value.values()) if isinstance(value, dict) else []
 
 
 def render_missing_frontend() -> str:
