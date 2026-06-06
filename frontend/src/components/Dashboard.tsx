@@ -277,7 +277,7 @@ function RightRail(props: {
         </Box>
       </Paper>
 
-      <LiveActivityPanel tasks={props.data.tasks} />
+      <LiveActivityPanel currentStepLabel={step.label} tasks={props.data.tasks} />
 
       <Paper withBorder className="rail-panel log-panel" p="md">
         <Group justify="space-between" mb="sm">
@@ -342,8 +342,9 @@ function LogLine({ line }: { line: string }) {
   );
 }
 
-function LiveActivityPanel({ tasks }: { tasks: TaskLog[] }) {
-  const activity = currentLiveActivity(tasks);
+function LiveActivityPanel({ currentStepLabel, tasks }: { currentStepLabel: string; tasks: TaskLog[] }) {
+  const daemonCanHaveActiveTask = !["Idle", "Sleeping", "Polling Linear", "Checking PRs"].includes(currentStepLabel);
+  const activity = daemonCanHaveActiveTask ? currentLiveActivity(tasks) : null;
   return (
     <Paper withBorder px="md" py="sm" className="live-activity-panel rail-panel">
       <Group align="center" justify="space-between" gap="md" wrap="nowrap">
@@ -355,7 +356,7 @@ function LiveActivityPanel({ tasks }: { tasks: TaskLog[] }) {
             <Text fw={700} size="sm">{activity?.task.title ?? "No active task"}</Text>
           </Group>
           <Text c="dimmed" className="truncate live-activity-line" size="xs">
-            {activity ? `${stageName(activity.stage.name)}: ${activity.stage.summary?.last_line || "Working"}` : "Waiting for the next Codex stage."}
+            {activity ? `${stageName(activity.stage.name)}: ${activity.stage.summary?.last_line || "Working"}` : `${currentStepLabel}: waiting for the next Codex stage.`}
           </Text>
         </Box>
         {activity ? (
