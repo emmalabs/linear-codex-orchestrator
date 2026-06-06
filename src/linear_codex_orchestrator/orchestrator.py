@@ -1178,6 +1178,28 @@ def update_pr_status(
     feedback_count: int | None = None,
 ) -> None:
     payload = read_status()
+    update_pr_status_record(
+        payload,
+        pr,
+        status,
+        issue=issue,
+        repo_key=repo_key,
+        repo_path=repo_path,
+        feedback_count=feedback_count,
+    )
+    write_status(payload)
+
+
+def update_pr_status_record(
+    payload: dict[str, object],
+    pr: OpenPullRequest,
+    status: str,
+    *,
+    issue: str | None = None,
+    repo_key: str | None = None,
+    repo_path: Path | None = None,
+    feedback_count: int | None = None,
+) -> None:
     prs = payload["prs"]
     assert isinstance(prs, dict)
     key = f"{pr.repo}#{pr.number}"
@@ -1222,7 +1244,6 @@ def update_pr_status(
         task_key=pr_feedback_task_key(repo_key, pr),
     )
     prs[key] = current
-    write_status(payload)
 
 
 def update_pr_feedback_status(
@@ -1234,7 +1255,9 @@ def update_pr_feedback_status(
     repo_path: Path | None = None,
     feedback_count: int | None = None,
 ) -> None:
-    update_pr_status(
+    payload = read_status()
+    update_pr_status_record(
+        payload,
         pr,
         status,
         issue=issue,
@@ -1244,6 +1267,7 @@ def update_pr_feedback_status(
     )
     if issue:
         update_issue_pr_feedback_event(
+            payload,
             issue,
             status,
             pr,
@@ -1251,9 +1275,11 @@ def update_pr_feedback_status(
             repo_path=repo_path,
             feedback_count=feedback_count,
         )
+    write_status(payload)
 
 
 def update_issue_pr_feedback_event(
+    payload: dict[str, object],
     issue_identifier: str,
     status: str,
     pr: OpenPullRequest,
@@ -1262,7 +1288,6 @@ def update_issue_pr_feedback_event(
     repo_path: Path | None = None,
     feedback_count: int | None = None,
 ) -> None:
-    payload = read_status()
     issues = payload["issues"]
     assert isinstance(issues, dict)
     current = issues.get(issue_identifier, {})
@@ -1286,7 +1311,6 @@ def update_issue_pr_feedback_event(
         task_key=pr_feedback_task_key(repo_key, pr),
     )
     issues[issue_identifier] = current
-    write_status(payload)
 
 
 def append_status_event(record: dict[str, object], status: str, *, source: str, **extra: object) -> None:

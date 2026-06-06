@@ -42,6 +42,7 @@ from linear_codex_orchestrator.orchestrator import (
     start_comment,
     truncate_text,
     update_issue_status,
+    update_pr_feedback_status,
     update_pr_status,
     workspace_status_context,
     write_processed_feedback,
@@ -557,6 +558,33 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(issue_event["status"], "Feedback found")
         self.assertEqual(issue_event["source"], "pr-feedback")
         self.assertEqual(issue_event["task_key"], "web-12")
+
+    def test_pr_feedback_status_updates_pr_and_issue_in_one_write(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+        )
+        payload: dict[str, object] = {"issues": {}, "prs": {}}
+        with (
+            patch("linear_codex_orchestrator.orchestrator.read_status", return_value=payload),
+            patch("linear_codex_orchestrator.orchestrator.write_status") as write_status_mock,
+        ):
+            update_pr_feedback_status(
+                pr,
+                "Feedback found",
+                issue="ENG-1",
+                repo_key="web",
+                repo_path=Path("/tmp/workspace/web"),
+                feedback_count=2,
+            )
+
+        write_status_mock.assert_called_once_with(payload)
+        self.assertEqual(payload["prs"]["acme/web#12"]["events"][0]["status"], "Feedback found")
+        self.assertEqual(payload["issues"]["ENG-1"]["events"][0]["source"], "pr-feedback")
 
     def test_process_pr_feedback_records_pr_only_events_without_issue_identifier(self) -> None:
         class FakeGitHub:
