@@ -78,6 +78,7 @@ export function SetupView(props: {
     error: null
   });
   const [pickerTarget, setPickerTarget] = React.useState<FolderPickerTarget | null>(null);
+  const [workspaceRemovalTarget, setWorkspaceRemovalTarget] = React.useState<WorkspaceDraft | null>(null);
   const hydratedRef = React.useRef(false);
   const lastSavedPayloadRef = React.useRef("");
 
@@ -180,6 +181,14 @@ export function SetupView(props: {
     props.section
   ]);
 
+  const removeWorkspace = () => {
+    if (!workspaceRemovalTarget) {
+      return;
+    }
+    setWorkspaces((current) => current.filter((item) => item.id !== workspaceRemovalTarget.id));
+    setWorkspaceRemovalTarget(null);
+  };
+
   const pageTitle = props.section === "workspaces" ? "Workspaces" : "Orchestrator";
   const pageDescription = props.section === "workspaces"
     ? "Map Linear teams to local folders and GitHub repositories."
@@ -223,7 +232,7 @@ export function SetupView(props: {
                     teamLookup={teamLookup}
                     workspace={workspace}
                     onChange={(next) => setWorkspaces((current) => current.map((item) => item.id === next.id ? next : item))}
-                    onRemove={() => setWorkspaces((current) => current.filter((item) => item.id !== workspace.id))}
+                    onRemove={() => setWorkspaceRemovalTarget(workspace)}
                   />
                 ))}
               </Stack>
@@ -324,6 +333,11 @@ export function SetupView(props: {
         </>
       )}
 
+      <WorkspaceRemovalModal
+        onClose={() => setWorkspaceRemovalTarget(null)}
+        onConfirm={removeWorkspace}
+        workspace={workspaceRemovalTarget}
+      />
       <FolderPickerModal target={pickerTarget} onClose={() => setPickerTarget(null)} />
     </Stack>
   );
@@ -433,6 +447,65 @@ function EmptyState(props: { icon: React.ReactNode; text: string }) {
       <Text c="dimmed" size="sm" ta="center">{props.text}</Text>
     </Stack>
   );
+}
+
+function WorkspaceRemovalModal(props: {
+  workspace: WorkspaceDraft | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const name = props.workspace ? workspaceDisplayName(props.workspace) : "";
+  const detail = props.workspace ? workspaceRemovalDetail(props.workspace) : "";
+
+  return (
+    <Modal
+      centered
+      opened={props.workspace !== null}
+      onClose={props.onClose}
+      title="Delete workspace?"
+    >
+      <Stack gap="md">
+        <Group align="flex-start" gap="sm" wrap="nowrap">
+          <ThemeIcon color="red" variant="light" radius="md">
+            <IconAlertTriangle size={18} />
+          </ThemeIcon>
+          <Box miw={0}>
+            <Text fw={700} size="sm">Delete {name}?</Text>
+            <Text c="dimmed" size="sm">
+              {detail} This removes the workspace from the saved `workspace_map` after autosave.
+            </Text>
+          </Box>
+        </Group>
+        <Group justify="flex-end" gap="xs">
+          <Button onClick={props.onClose} variant="default">
+            Cancel
+          </Button>
+          <Button color="red" onClick={props.onConfirm}>
+            Delete workspace
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+function workspaceDisplayName(workspace: WorkspaceDraft) {
+  return workspace.teamKey.trim() || workspace.path.trim() || "New workspace";
+}
+
+function workspaceRemovalDetail(workspace: WorkspaceDraft) {
+  const teamKey = workspace.teamKey.trim();
+  const path = workspace.path.trim();
+  if (teamKey && path) {
+    return `Team ${teamKey} at ${path}.`;
+  }
+  if (teamKey) {
+    return `Team ${teamKey}.`;
+  }
+  if (path) {
+    return `Workspace folder ${path}.`;
+  }
+  return "This workspace has not been configured yet.";
 }
 
 function WorkspaceEditor(props: {
