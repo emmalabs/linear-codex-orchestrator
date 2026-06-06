@@ -23,7 +23,7 @@ import type { ConfigResponse, DashboardData, IssueStatus, PullRequestStatus, Sel
 import { emptyData } from "./types";
 import { DashboardView } from "./components/Dashboard";
 import { SetupView } from "./components/Setup";
-import { DetailDrawer } from "./components/Detail";
+import { DetailPage } from "./components/Detail";
 
 type ActiveSection = "issues" | "workspaces" | "prs" | "settings";
 
@@ -94,7 +94,11 @@ export function App() {
     }
   }, [data.orchestration]);
 
-  const activeTitle = activeTab === "issues"
+  const activeTitle = selectedDetail
+    ? selectedDetail.kind === "issue"
+      ? selectedDetail.item.identifier || "Issue"
+      : selectedDetail.item.key || "Pull request"
+    : activeTab === "issues"
     ? "Issues"
     : activeTab === "prs"
       ? "Pull Requests"
@@ -138,13 +142,19 @@ export function App() {
                   active={activeTab === "issues"}
                   icon={<IconListDetails size={18} />}
                   label="Issues"
-                  onClick={() => setActiveTab("issues")}
+                  onClick={() => {
+                    setSelectedDetail(null);
+                    setActiveTab("issues");
+                  }}
                 />
                 <NavItem
                   active={activeTab === "prs"}
                   icon={<IconGitPullRequest size={18} />}
                   label="Pull Requests"
-                  onClick={() => setActiveTab("prs")}
+                  onClick={() => {
+                    setSelectedDetail(null);
+                    setActiveTab("prs");
+                  }}
                 />
               </Stack>
             </Stack>
@@ -153,13 +163,19 @@ export function App() {
                 active={activeTab === "workspaces"}
                 icon={<IconBriefcase size={18} />}
                 label="Workspaces"
-                onClick={() => setActiveTab("workspaces")}
+                onClick={() => {
+                  setSelectedDetail(null);
+                  setActiveTab("workspaces");
+                }}
               />
               <NavItem
                 active={activeTab === "settings"}
                 icon={<IconAdjustments size={18} />}
                 label="Settings"
-                onClick={() => setActiveTab("settings")}
+                onClick={() => {
+                  setSelectedDetail(null);
+                  setActiveTab("settings");
+                }}
               />
               <Anchor className="nav-item" href="https://github.com/emmalabs/linear-codex-orchestrator" target="_blank" rel="noopener noreferrer">
                 <Group gap="sm" wrap="nowrap">
@@ -174,29 +190,34 @@ export function App() {
 
         <AppShell.Main>
           <Box className="app-main-inner">
-            <Box style={{ display: activeTab === "issues" || activeTab === "prs" ? "block" : "none" }}>
-              <DashboardView
-                data={data}
-                mode={activeTab === "prs" ? "prs" : "issues"}
-                onSelectDetail={setSelectedDetail}
-                orchestrationRef={orchestrationRef}
-                shouldFollowRef={shouldFollowRef}
+            {selectedDetail ? (
+              <DetailPage
+                detail={selectedDetail}
+                onBack={() => setSelectedDetail(null)}
+                tasks={data.tasks}
               />
-            </Box>
-            <Box style={{ display: activeTab === "workspaces" || activeTab === "settings" ? "block" : "none" }}>
-              <SetupView
-                configResponse={configResponse}
-                section={activeTab === "settings" ? "orchestrator" : "workspaces"}
-              />
-            </Box>
+            ) : (
+              <>
+                <Box style={{ display: activeTab === "issues" || activeTab === "prs" ? "block" : "none" }}>
+                  <DashboardView
+                    data={data}
+                    mode={activeTab === "prs" ? "prs" : "issues"}
+                    onSelectDetail={setSelectedDetail}
+                    orchestrationRef={orchestrationRef}
+                    shouldFollowRef={shouldFollowRef}
+                  />
+                </Box>
+                <Box style={{ display: activeTab === "workspaces" || activeTab === "settings" ? "block" : "none" }}>
+                  <SetupView
+                    configResponse={configResponse}
+                    section={activeTab === "settings" ? "orchestrator" : "workspaces"}
+                  />
+                </Box>
+              </>
+            )}
           </Box>
         </AppShell.Main>
       </AppShell>
-      <DetailDrawer
-        detail={selectedDetail}
-        onClose={() => setSelectedDetail(null)}
-        tasks={data.tasks}
-      />
     </MantineProvider>
   );
 }

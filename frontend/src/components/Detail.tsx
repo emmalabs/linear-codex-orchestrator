@@ -1,7 +1,7 @@
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { IconBrandGithub, IconExternalLink, IconFolder } from "@tabler/icons-react";
+import { IconArrowLeft, IconBrandGithub, IconExternalLink, IconFolder } from "@tabler/icons-react";
 import {
   Accordion,
   Badge,
@@ -9,7 +9,6 @@ import {
   Button,
   Card,
   Divider,
-  Drawer,
   Group,
   Paper,
   SimpleGrid,
@@ -24,36 +23,58 @@ import { stageName } from "../lib/orchestration";
 import { issuePullRequests, issueRepos, legacyChangedRepos, prLabel, tasksForDetail } from "../lib/tasks";
 import { ExternalLink, MetricCard, StatusPill } from "./common";
 
-export function DetailDrawer(props: {
-  detail: SelectedDetail | null;
+export function DetailPage(props: {
+  detail: SelectedDetail;
   tasks: TaskLog[];
-  onClose: () => void;
+  onBack: () => void;
 }) {
-  const matchingTasks = props.detail ? tasksForDetail(props.detail, props.tasks) : [];
+  const matchingTasks = tasksForDetail(props.detail, props.tasks);
+  const title = props.detail.kind === "issue"
+    ? props.detail.item.title || "Untitled issue"
+    : props.detail.item.title || "Untitled pull request";
+  const key = props.detail.kind === "issue"
+    ? props.detail.item.identifier || "Issue"
+    : props.detail.item.key || "Pull request";
   return (
-    <Drawer
-      opened={props.detail !== null}
-      onClose={props.onClose}
-      position="right"
-      size="min(1120px, 92vw)"
-      title={props.detail?.kind === "issue" ? "Linear issue details" : "Pull request details"}
-    >
-      {props.detail ? (
-        <Stack gap="md">
+    <Stack className="detail-page" gap="md">
+      <Group className="detail-page-toolbar" justify="space-between" gap="md" wrap="nowrap">
+        <Button leftSection={<IconArrowLeft size={15} />} onClick={props.onBack} size="xs" variant="subtle">
+          Back
+        </Button>
+        <Text c="dimmed" size="xs">{props.detail.kind === "issue" ? "Issue" : "Pull request"}</Text>
+      </Group>
+
+      <Box className="detail-layout">
+        <Stack className="detail-main" gap="md" miw={0}>
+          <Paper withBorder className="detail-title-panel" p="lg">
+            <Stack gap="sm">
+              <Group gap="xs" wrap="nowrap">
+                <Text className="detail-key" fw={800}>{key}</Text>
+                <StatusPill status={props.detail.item.status} />
+              </Group>
+              <Title className="detail-title" order={1}>{title}</Title>
+            </Stack>
+          </Paper>
+
           {props.detail.kind === "issue" ? (
             <IssueDetails issue={props.detail.item} />
           ) : (
             <PullRequestDetails pr={props.detail.item} />
           )}
+
           <Divider label="Task logs" labelPosition="left" />
           {matchingTasks.length ? (
             matchingTasks.map((task) => <TaskDetails key={task.key} task={task} />)
           ) : (
-            <Text c="dimmed" size="sm">No matching task logs yet.</Text>
+            <Paper withBorder p="md">
+              <Text c="dimmed" size="sm">No matching task logs yet.</Text>
+            </Paper>
           )}
         </Stack>
-      ) : null}
-    </Drawer>
+
+        <DetailProperties detail={props.detail} />
+      </Box>
+    </Stack>
   );
 }
 
@@ -61,21 +82,12 @@ function IssueDetails({ issue }: { issue: IssueStatus }) {
   const repos = issueRepos(issue);
   const prs = issuePullRequests(issue);
   return (
-    <Card withBorder padding="md">
+    <Card withBorder className="detail-content-card" padding="md">
       <Stack gap="md">
-        <Group align="flex-start" justify="space-between" gap="md">
-          <Box miw={0}>
-            <Group gap="xs">
-              <Title order={2} size="h2">{issue.identifier || "Issue"}</Title>
-              <StatusPill status={issue.status} />
-            </Group>
-            <Text mt={4}>{issue.title || "Untitled issue"}</Text>
-          </Box>
-          <Group gap="xs">
-            {prs[0] ? <Button component="a" href={prs[0]} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
-            {issue.project_url ? <Button component="a" href={issue.project_url} leftSection={<IconFolder size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">Project</Button> : null}
-            {issue.url ? <Button component="a" href={issue.url} leftSection={<IconExternalLink size={14} />} target="_blank" rel="noopener noreferrer" size="xs">Linear</Button> : null}
-          </Group>
+        <Group gap="xs">
+          {prs[0] ? <Button component="a" href={prs[0]} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">PR</Button> : null}
+          {issue.project_url ? <Button component="a" href={issue.project_url} leftSection={<IconFolder size={14} />} target="_blank" rel="noopener noreferrer" size="xs" variant="light">Project</Button> : null}
+          {issue.url ? <Button component="a" href={issue.url} leftSection={<IconExternalLink size={14} />} target="_blank" rel="noopener noreferrer" size="xs">Linear</Button> : null}
         </Group>
         <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
           <DetailTile label="Project" value={issue.project} href={issue.project_url} />
@@ -110,18 +122,9 @@ function IssueDetails({ issue }: { issue: IssueStatus }) {
 
 function PullRequestDetails({ pr }: { pr: PullRequestStatus }) {
   return (
-    <Card withBorder padding="md">
+    <Card withBorder className="detail-content-card" padding="md">
       <Stack gap="md">
-        <Group align="flex-start" justify="space-between" gap="md">
-          <Box miw={0}>
-            <Group gap="xs">
-              <Title order={2} size="h2">{pr.key || "Pull request"}</Title>
-              <StatusPill status={pr.status} />
-            </Group>
-            <Text mt={4}>{pr.title || "Untitled pull request"}</Text>
-          </Box>
-          {pr.url ? <Button component="a" href={pr.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">GitHub</Button> : null}
-        </Group>
+        {pr.url ? <Group><Button component="a" href={pr.url} leftSection={<IconBrandGithub size={14} />} target="_blank" rel="noopener noreferrer" size="xs">GitHub</Button></Group> : null}
         <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
           <DetailTile label="Issue" value={pr.issue} />
           <DetailTile label="Repo key" value={pr.repo_key} />
@@ -134,6 +137,48 @@ function PullRequestDetails({ pr }: { pr: PullRequestStatus }) {
         </SimpleGrid>
       </Stack>
     </Card>
+  );
+}
+
+function DetailProperties({ detail }: { detail: SelectedDetail }) {
+  if (detail.kind === "issue") {
+    const issue = detail.item;
+    const prs = issuePullRequests(issue);
+    return (
+      <Paper withBorder className="detail-properties" p="md">
+        <Stack gap="sm">
+          <Text fw={800}>Properties</Text>
+          <DetailTile label="Status" value={issue.status} />
+          <DetailTile label="Project" value={issue.project} href={issue.project_url} />
+          <DetailTile label="Updated" value={issue.updated_at} />
+          <DetailTile label="Changed repos" value={issue.changed_repos ?? legacyChangedRepos(issue)} />
+          <DetailTile label="Pull requests">
+            {prs.length ? (
+              <Stack gap={2}>
+                {prs.map((pr) => (
+                  <ExternalLink href={pr} key={pr}>{prLabel(pr)}</ExternalLink>
+                ))}
+              </Stack>
+            ) : null}
+          </DetailTile>
+        </Stack>
+      </Paper>
+    );
+  }
+  const pr = detail.item;
+  return (
+    <Paper withBorder className="detail-properties" p="md">
+      <Stack gap="sm">
+        <Text fw={800}>Properties</Text>
+        <DetailTile label="Status" value={pr.status} />
+        <DetailTile label="Issue" value={pr.issue} />
+        <DetailTile label="Repository" value={pr.repo_key || pr.repo} />
+        <DetailTile label="Branch" value={pr.branch} />
+        <DetailTile label="Base" value={pr.base} />
+        <DetailTile label="Feedback" value={pr.feedback_count?.toString()} />
+        <DetailTile label="Updated" value={pr.updated_at} />
+      </Stack>
+    </Paper>
   );
 }
 
