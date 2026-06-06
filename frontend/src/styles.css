@@ -455,11 +455,21 @@ body {
 }
 
 .right-rail {
+  display: flex;
+  flex-direction: column;
   height: 100%;
+  min-height: 0;
 }
 
 .rail-panel {
   background: color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-8));
+}
+
+.log-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .context-tile,
@@ -488,17 +498,18 @@ body {
 .orchestration-log {
   background: transparent;
   color: var(--mantine-color-text);
+  flex: 1 1 auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.45;
   margin: 0;
+  min-height: 0;
   overflow: auto;
   white-space: pre;
 }
 
 .compact-orchestration-log {
-  height: min(42vh, 430px);
-  min-height: 260px;
+  height: 100%;
 }
 
 .log-line {
@@ -618,6 +629,10 @@ body {
 
   .right-rail {
     height: auto;
+  }
+
+  .log-panel {
+    flex: 0 0 auto;
   }
 
   .feed-scroll {
