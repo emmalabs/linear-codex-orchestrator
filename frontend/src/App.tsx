@@ -28,6 +28,16 @@ import { currentStep } from "./lib/orchestration";
 
 type ActiveSection = "issues" | "workspaces" | "prs" | "settings";
 
+const appTheme = {
+  fontSizes: {
+    xs: "14px",
+    sm: "16px",
+    md: "18px",
+    lg: "20px",
+    xl: "22px"
+  }
+};
+
 export function App() {
   const [data, setData] = React.useState<DashboardData>(emptyData);
   const [configResponse, setConfigResponse] = React.useState<ConfigResponse | null>(null);
@@ -109,7 +119,7 @@ export function App() {
         : "Settings";
 
   return (
-    <MantineProvider defaultColorScheme="dark">
+    <MantineProvider defaultColorScheme="dark" theme={appTheme}>
       <AppShell
         header={{ height: 56 }}
         navbar={{ width: 248, breakpoint: "sm" }}

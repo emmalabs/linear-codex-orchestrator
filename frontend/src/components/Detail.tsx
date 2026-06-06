@@ -179,71 +179,74 @@ function DetailTile({ label, value, href, children }: {
 
 function TaskDetails({ task }: { task: TaskLog }) {
   return (
-    <Box className="timeline-item">
-      <span className="timeline-dot" aria-hidden="true" />
-      <Stack className="timeline-content" gap="sm">
-        <Group align="flex-start" justify="space-between" gap="md" wrap="nowrap">
-          <Box miw={0}>
-            <Group gap="xs">
-              <Text fw={800}>{task.title}</Text>
-              <Badge color={task.type === "PR feedback" ? "violet" : "blue"} size="sm" variant="light">{task.type}</Badge>
-            </Group>
-            <Text c="dimmed" className="timeline-summary" size="sm">{task.headline || "No summary yet."}</Text>
-          </Box>
-          <Stack align="flex-end" gap={0} miw={92}>
-            <Text c="dimmed" size="xs">{new Date(task.modified * 1000).toLocaleTimeString()}</Text>
-            <Text c="dimmed" size="xs">{new Date(task.modified * 1000).toLocaleDateString()}</Text>
-          </Stack>
-        </Group>
-        <Group className="timeline-stats" gap="lg">
+    <Stack className="timeline-task" gap="md">
+      <Stack className="timeline-task-description" gap="sm">
+        <Box miw={0}>
+          <Group gap="xs">
+            <Text fw={800}>{task.title}</Text>
+            <Badge color={task.type === "PR feedback" ? "violet" : "blue"} size="sm" variant="light">{task.type}</Badge>
+          </Group>
+          <Text c="dimmed" className="timeline-summary" size="sm">{task.headline || "No summary yet."}</Text>
+        </Box>
+        <Group className="timeline-stats" gap="md">
           <Text c="dimmed" size="xs"><strong>{task.file_count}</strong> files</Text>
           <Text c="dimmed" size="xs"><strong>{formatCount(task.tokens_used)}</strong> tokens</Text>
           <Text c="dimmed" size="xs"><strong>{task.log_count}</strong> logs</Text>
         </Group>
-        <Accordion className="timeline-stages" variant="separated" multiple>
-          {task.stages.map((stage) => (
-            <StageLogPanel key={stage.name} log={stage} />
-          ))}
-        </Accordion>
+        <Text c="dimmed" size="xs">
+          Updated {new Date(task.modified * 1000).toLocaleTimeString()} · {new Date(task.modified * 1000).toLocaleDateString()}
+        </Text>
       </Stack>
-    </Box>
+      <Stack className="timeline-stage-list" gap={0}>
+        {task.stages.map((stage) => (
+          <StageTimelineItem key={stage.name} log={stage} />
+        ))}
+      </Stack>
+    </Stack>
   );
 }
 
-function StageLogPanel({ log }: { log: StageLog }) {
+function StageTimelineItem({ log }: { log: StageLog }) {
   return (
-    <Accordion.Item value={log.name}>
-      <Accordion.Control>
-        <Group justify="space-between" wrap="nowrap">
-          <Box miw={0}>
-            <Text fw={700} size="sm">{stageName(log.name)}</Text>
-            <Text c="dimmed" className="truncate" size="xs">
-              {log.summary?.headline || "No processed summary."}
-            </Text>
-            {log.summary?.last_line ? (
-              <Text className="truncate" size="xs">
-                {log.summary.status === "running" ? "Live: " : "Last: "}
-                {log.summary.last_line}
-              </Text>
-            ) : null}
-          </Box>
-          <Stack align="flex-end" gap={0} miw={92}>
-            <Text c="dimmed" size="xs">{formatCount(log.summary?.tokens_used)} tokens</Text>
-            <Text c="dimmed" size="xs">{new Date(log.modified * 1000).toLocaleTimeString()}</Text>
-          </Stack>
-        </Group>
-      </Accordion.Control>
-      <Accordion.Panel>
-        <Stack gap="sm">
-          <Group justify="space-between" gap="xs">
-            <Text c="dimmed" size="xs">{formatBytes(log.size)} raw log</Text>
-            <ExternalLink href={`/logs/${encodeURIComponent(log.name)}`}>Open raw in new tab</ExternalLink>
-          </Group>
-          <LogMessage message={log.summary?.message} />
-          <ChangedFilesTable summary={log.summary} />
-        </Stack>
-      </Accordion.Panel>
-    </Accordion.Item>
+    <Box className="timeline-item">
+      <span className="timeline-dot" aria-hidden="true" />
+      <Accordion className="timeline-stage-toggle" variant="separated">
+        <Accordion.Item value={log.name}>
+          <Accordion.Control>
+            <Stack gap="xs">
+              <Group justify="space-between" wrap="nowrap">
+                <Box miw={0}>
+                  <Text fw={700} size="sm">{stageName(log.name)}</Text>
+                  <Text c="dimmed" className="truncate" size="xs">
+                    {log.summary?.headline || "No processed summary."}
+                  </Text>
+                </Box>
+                <Stack align="flex-end" gap={0} miw={92}>
+                  <Text c="dimmed" size="xs">{formatCount(log.summary?.tokens_used)} tokens</Text>
+                  <Text c="dimmed" size="xs">{new Date(log.modified * 1000).toLocaleTimeString()}</Text>
+                </Stack>
+              </Group>
+              {log.summary?.last_line ? (
+                <Text className="truncate" size="xs">
+                  {log.summary.status === "running" ? "Live: " : "Last: "}
+                  {log.summary.last_line}
+                </Text>
+              ) : null}
+            </Stack>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <Stack gap="sm">
+              <Group justify="space-between" gap="xs">
+                <Text c="dimmed" size="xs">{formatBytes(log.size)} raw log</Text>
+                <ExternalLink href={`/logs/${encodeURIComponent(log.name)}`}>Open raw in new tab</ExternalLink>
+              </Group>
+              <LogMessage message={log.summary?.message} />
+              <ChangedFilesTable summary={log.summary} />
+            </Stack>
+          </Accordion.Panel>
+        </Accordion.Item>
+      </Accordion>
+    </Box>
   );
 }
 
