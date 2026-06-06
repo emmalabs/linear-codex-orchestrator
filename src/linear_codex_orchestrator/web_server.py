@@ -89,6 +89,9 @@ class LogRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             self._write_config()
             return
+        if path == "/api/status/archive":
+            self._archive_status()
+            return
         self.send_error(404)
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -151,6 +154,27 @@ class LogRequestHandler(BaseHTTPRequestHandler):
             self._send_error_json(400, str(exc))
             return
         self._send_json({"ok": True, "config": config_index()})
+
+    def _archive_status(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 1024 * 32:
+                self._send_error_json(413, "Archive payload is too large.")
+                return
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Archive payload must be a JSON object.")
+            kind = payload.get("kind")
+            key = payload.get("key")
+            if kind not in {"issue", "pr"}:
+                raise ValueError('Archive kind must be "issue" or "pr".')
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("Archive key is required.")
+            archived = archive_status_item(kind, key.strip())
+        except (json.JSONDecodeError, RuntimeError, ValueError) as exc:
+            self._send_error_json(400, str(exc))
+            return
+        self._send_json({"ok": True, "archived": archived, "status": status_index()})
 
     def _send_log(self, raw_name: str) -> None:
         try:
@@ -435,11 +459,7 @@ def task_from_log_name(name: str) -> dict[str, str]:
 
 
 def status_index() -> dict[str, object]:
-    try:
-        with (LOG_DIR / "status.json").open(encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (FileNotFoundError, json.JSONDecodeError):
-        payload = {}
+    payload = read_status_payload()
     issues = payload.get("issues", {})
     prs = payload.get("prs", {})
     return {
@@ -454,6 +474,38 @@ def status_index() -> dict[str, object]:
             reverse=True,
         ),
     }
+
+
+def archive_status_item(kind: str, key: str) -> bool:
+    payload = read_status_payload()
+    collection_key = "issues" if kind == "issue" else "prs"
+    collection = payload.get(collection_key, {})
+    if not isinstance(collection, dict):
+        collection = {}
+        payload[collection_key] = collection
+    existed = key in collection
+    collection.pop(key, None)
+    write_status_payload(payload)
+    return existed
+
+
+def read_status_payload() -> dict[str, object]:
+    try:
+        with (LOG_DIR / "status.json").open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError):
+        payload = {}
+    return {
+        "issues": payload.get("issues", {}) if isinstance(payload.get("issues", {}), dict) else {},
+        "prs": payload.get("prs", {}) if isinstance(payload.get("prs", {}), dict) else {},
+    }
+
+
+def write_status_payload(payload: dict[str, object]) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    with (LOG_DIR / "status.json").open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
 
 
 def render_missing_frontend() -> str:

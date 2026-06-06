@@ -477,6 +477,22 @@ body {
   flex: 0 0 auto;
 }
 
+.feed-row-archive {
+  color: var(--mantine-color-dimmed);
+  opacity: 0.56;
+  transition: color 120ms ease, opacity 120ms ease;
+}
+
+.feed-row:hover .feed-row-archive,
+.feed-row:focus-visible .feed-row-archive,
+.feed-row-archive:focus-visible {
+  opacity: 1;
+}
+
+.feed-row-archive:hover {
+  color: var(--mantine-color-red-3);
+}
+
 .feed-row-title {
   color: var(--mantine-color-text);
   display: -webkit-box;

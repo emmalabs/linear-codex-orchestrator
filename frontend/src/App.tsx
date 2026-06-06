@@ -132,6 +132,40 @@ export function App() {
     setSelectedDetail(null);
   }, []);
 
+  const archiveDetail = React.useCallback(async (detail: SelectedDetail) => {
+    const key = detail.kind === "issue" ? detail.item.identifier : detail.item.key;
+    if (!key) {
+      throw new Error("This item cannot be archived because it has no stable key.");
+    }
+    const response = await fetch("/api/status/archive", {
+      body: JSON.stringify({ kind: detail.kind, key }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST"
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(payload.error || "Unable to archive item.");
+    }
+    const payload = await response.json() as {
+      status?: {
+        issues?: IssueStatus[];
+        prs?: PullRequestStatus[];
+      };
+    };
+    setData((current) => ({
+      ...current,
+      issues: payload.status?.issues ?? current.issues.filter((issue) => issue.identifier !== key),
+      prs: payload.status?.prs ?? current.prs.filter((pr) => pr.key !== key)
+    }));
+    setSelectedDetail((current) => {
+      if (!current) {
+        return current;
+      }
+      const currentKey = current.kind === "issue" ? current.item.identifier : current.item.key;
+      return current.kind === detail.kind && currentKey === key ? null : current;
+    });
+  }, []);
+
   const openSection = React.useCallback((section: ActiveSection) => {
     detailHistoryRef.current = false;
     setSelectedDetail(null);
@@ -235,6 +269,7 @@ export function App() {
               <>
                 <Box style={{ display: activeTab === "issues" || activeTab === "prs" ? "block" : "none" }}>
                   <DashboardView
+                    onArchive={archiveDetail}
                     data={data}
                     mode={activeTab === "prs" ? "prs" : "issues"}
                     onSelectDetail={openDetail}

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { IconExternalLink } from "@tabler/icons-react";
+import { IconExternalLink, IconTrash } from "@tabler/icons-react";
 import {
   ActionIcon,
   Badge,
@@ -27,6 +27,7 @@ const groupOrder: StatusGroup[] = ["Active", "Needs attention", "Ready", "Done"]
 export function DashboardView(props: {
   data: DashboardData;
   mode: FeedMode;
+  onArchive: (detail: SelectedDetail) => Promise<void>;
   onSelectDetail: (detail: SelectedDetail) => void;
   orchestrationRef: React.RefObject<HTMLDivElement | null>;
   shouldFollowRef: React.MutableRefObject<boolean>;
@@ -36,6 +37,7 @@ export function DashboardView(props: {
       <FeedPanel
         data={props.data}
         mode={props.mode}
+        onArchive={props.onArchive}
         onSelectDetail={props.onSelectDetail}
       />
       <RightRail
@@ -50,14 +52,15 @@ export function DashboardView(props: {
 function FeedPanel(props: {
   data: DashboardData;
   mode: FeedMode;
+  onArchive: (detail: SelectedDetail) => Promise<void>;
   onSelectDetail: (detail: SelectedDetail) => void;
 }) {
   const [filter, setFilter] = React.useState<FeedFilter>("All");
   const items = React.useMemo(
     () => props.mode === "issues"
-      ? props.data.issues.map((item) => issueFeedItem(item, props.onSelectDetail))
-      : props.data.prs.map((item) => prFeedItem(item, props.onSelectDetail)),
-    [props.data.issues, props.data.prs, props.mode, props.onSelectDetail]
+      ? props.data.issues.map((item) => issueFeedItem(item, props.onArchive, props.onSelectDetail))
+      : props.data.prs.map((item) => prFeedItem(item, props.onArchive, props.onSelectDetail)),
+    [props.data.issues, props.data.prs, props.mode, props.onArchive, props.onSelectDetail]
   );
   const grouped = React.useMemo(() => {
     const buckets = new Map<StatusGroup, FeedItem[]>();
@@ -148,10 +151,16 @@ type FeedItem = {
   updatedAt?: string;
   meta: string[];
   tone: StatusTone;
+  onArchive?: () => Promise<void>;
   onOpen: () => void;
 };
 
-function issueFeedItem(issue: IssueStatus, onSelectDetail: (detail: SelectedDetail) => void): FeedItem {
+function issueFeedItem(
+  issue: IssueStatus,
+  onArchive: (detail: SelectedDetail) => Promise<void>,
+  onSelectDetail: (detail: SelectedDetail) => void
+): FeedItem {
+  const detail: SelectedDetail = { kind: "issue", item: issue };
   const meta = [
     issue.prs ? prMeta(issue.prs) : "",
     issue.changed_repos ? repoMeta(issue.changed_repos) : "",
@@ -166,11 +175,17 @@ function issueFeedItem(issue: IssueStatus, onSelectDetail: (detail: SelectedDeta
     updatedAt: issue.updated_at,
     meta,
     tone: statusTone(issue.status),
-    onOpen: () => onSelectDetail({ kind: "issue", item: issue })
+    onArchive: issue.identifier ? () => onArchive(detail) : undefined,
+    onOpen: () => onSelectDetail(detail)
   };
 }
 
-function prFeedItem(pr: PullRequestStatus, onSelectDetail: (detail: SelectedDetail) => void): FeedItem {
+function prFeedItem(
+  pr: PullRequestStatus,
+  onArchive: (detail: SelectedDetail) => Promise<void>,
+  onSelectDetail: (detail: SelectedDetail) => void
+): FeedItem {
+  const detail: SelectedDetail = { kind: "pr", item: pr };
   const meta = [
     pr.repo_key || pr.repo || "",
     pr.branch ? `Branch ${pr.branch}` : "",
@@ -186,7 +201,8 @@ function prFeedItem(pr: PullRequestStatus, onSelectDetail: (detail: SelectedDeta
     updatedAt: pr.updated_at,
     meta,
     tone: statusTone(pr.status),
-    onOpen: () => onSelectDetail({ kind: "pr", item: pr })
+    onArchive: pr.key ? () => onArchive(detail) : undefined,
+    onOpen: () => onSelectDetail(detail)
   };
 }
 
@@ -206,6 +222,25 @@ function repoMeta(value: string) {
 
 function FeedRow({ item }: { item: FeedItem }) {
   const timeLabel = relativeTime(item.updatedAt);
+  const [isArchiving, setIsArchiving] = React.useState(false);
+  const archiveItem = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!item.onArchive || isArchiving) {
+      return;
+    }
+    const confirmed = window.confirm(`Archive ${item.displayKey} from the dashboard?`);
+    if (!confirmed) {
+      return;
+    }
+    setIsArchiving(true);
+    try {
+      await item.onArchive();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to archive item.");
+      setIsArchiving(false);
+    }
+  };
+
   return (
     <UnstyledButton className={`feed-row feed-row-${item.tone}`} onClick={item.onOpen}>
       <span className={`feed-row-accent feed-row-accent-${item.tone}`} aria-hidden="true" />
@@ -230,6 +265,20 @@ function FeedRow({ item }: { item: FeedItem }) {
                 variant="subtle"
               >
                 <IconExternalLink size={14} />
+              </ActionIcon>
+            ) : null}
+            {item.onArchive ? (
+              <ActionIcon
+                aria-label={`Archive ${item.displayKey}`}
+                className="feed-row-archive"
+                color="gray"
+                loading={isArchiving}
+                onClick={archiveItem}
+                size="sm"
+                title={`Archive ${item.displayKey}`}
+                variant="subtle"
+              >
+                <IconTrash size={14} />
               </ActionIcon>
             ) : null}
           </Group>

@@ -57,6 +57,7 @@ from linear_codex_orchestrator.run_state import (
     write_issue_run_state,
 )
 from linear_codex_orchestrator.web_server import (
+    archive_status_item,
     browse_index,
     github_repo_index,
     render_missing_frontend,
@@ -594,6 +595,22 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summary["issues"][0]["project"], "Project X")
         self.assertEqual(summary["prs"][0]["key"], "acme/web#1")
         self.assertEqual(summary["prs"][0]["repo_path"], "/tmp/workspace/web")
+
+    def test_archive_status_item_removes_status_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                (tmp_path / "status.json").write_text(
+                    '{"issues":{"ENG-1":{"identifier":"ENG-1"}},'
+                    '"prs":{"acme/web#1":{"key":"acme/web#1"}}}',
+                    encoding="utf-8",
+                )
+                self.assertTrue(archive_status_item("issue", "ENG-1"))
+                self.assertTrue(archive_status_item("pr", "acme/web#1"))
+                self.assertFalse(archive_status_item("issue", "ENG-2"))
+                summary = status_index()
+        self.assertEqual(summary["issues"], [])
+        self.assertEqual(summary["prs"], [])
 
     def test_web_config_index_reads_sqlite_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
