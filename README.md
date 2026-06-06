@@ -150,7 +150,7 @@ The Workspaces tab maps Linear team keys to local workspaces. Each workspace can
 
 Codex can change any repository listed for the issue's Linear team. No per-repository Linear labels are required.
 
-When you choose a workspace folder in the folder explorer, the dashboard scans direct child folders for git repositories. Detected repositories are merged into the workspace table with:
+When you choose a workspace folder in the folder explorer, the dashboard adds the selected folder itself when it is a git repository and also scans direct child folders for git repositories. Detected repositories are merged into the workspace table with:
 
 - repo key derived from the folder name
 - local path

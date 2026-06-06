@@ -367,9 +367,12 @@ function WorkspaceEditor(props: {
 }) {
   const update = (patch: Partial<WorkspaceDraft>) => props.onChange({ ...props.workspace, ...patch });
   const selectWorkspacePath = (path: string, browse?: BrowseResponse) => {
+    const detectedRepos = browse?.current_repository
+      ? [browse.current_repository, ...(browse.repositories ?? [])]
+      : browse?.repositories ?? [];
     update({
       path,
-      repos: mergeDetectedRepos(props.workspace.repos, browse?.repositories ?? []),
+      repos: mergeDetectedRepos(props.workspace.repos, detectedRepos),
     });
   };
   const repoCount = props.workspace.repos.length;
@@ -555,6 +558,7 @@ function mergeDetectedRepos(
       base: repo.base ?? "main",
       branches: repo.branches?.length ? repo.branches : [repo.base ?? "main"],
     });
+    existingPaths.add(repo.path);
   }
   return next;
 }
