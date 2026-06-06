@@ -41,7 +41,6 @@ import type {
   RepoDraft,
   WorkspaceDraft
 } from "../types";
-import { readJsonResponse } from "../lib/api";
 import {
   cleanConfig,
   defaultConfig,
@@ -96,7 +95,7 @@ export function SetupView(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestPayload)
       });
-      const payload = await readJsonResponse<{ ok?: boolean; error?: string }>(response);
+      const payload = await response.json() as { ok?: boolean; error?: string };
       if (!response.ok) {
         throw new Error(payload.error || "Failed to save config.");
       }
@@ -601,10 +600,10 @@ function FolderPickerModal(props: { target: FolderPickerTarget | null; onClose: 
     setError(null);
     try {
       const response = await fetch(`/api/browse?path=${encodeURIComponent(path)}`, { cache: "no-store" });
-      const payload = await readJsonResponse<BrowseResponse>(response);
+      const payload = await response.json() as BrowseResponse;
       setBrowse(payload);
-    } catch (browseError) {
-      setError(browseError instanceof Error ? browseError.message : "Could not read that folder.");
+    } catch {
+      setError("Could not read that folder.");
     } finally {
       setLoading(false);
     }

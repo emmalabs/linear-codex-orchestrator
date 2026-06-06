@@ -15,7 +15,6 @@ import { emptyData } from "./types";
 import { DashboardView } from "./components/Dashboard";
 import { SetupView } from "./components/Setup";
 import { DetailDrawer } from "./components/Detail";
-import { readJsonResponse } from "./lib/api";
 
 export function App() {
   const [data, setData] = React.useState<DashboardData>(emptyData);
@@ -27,7 +26,7 @@ export function App() {
 
   const refreshConfig = React.useCallback(async () => {
     const response = await fetch("/api/config", { cache: "no-store" });
-    const config = await readJsonResponse<ConfigResponse>(response);
+    const config = await response.json() as ConfigResponse;
     setConfigResponse(config);
   }, []);
 
@@ -45,12 +44,12 @@ export function App() {
           fetch("/api/tasks", { cache: "no-store" }),
           fetch("/api/status", { cache: "no-store" })
         ]);
-        const orchestration = await readJsonResponse<{ text?: string }>(orchestrationResponse);
-        const tasks = await readJsonResponse<TaskLog[]>(tasksResponse);
-        const status = await readJsonResponse<{
+        const orchestration = await orchestrationResponse.json() as { text?: string };
+        const tasks = await tasksResponse.json() as TaskLog[];
+        const status = await statusResponse.json() as {
           issues?: IssueStatus[];
           prs?: PullRequestStatus[];
-        }>(statusResponse);
+        };
         if (cancelled) {
           return;
         }
