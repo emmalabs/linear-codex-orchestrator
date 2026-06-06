@@ -38,6 +38,7 @@ from linear_codex_orchestrator.orchestrator import (
     pr_feedback_prompt,
     read_processed_feedback,
     read_status,
+    resume_plan,
     start_comment,
     status_path,
     truncate_text,
@@ -1027,6 +1028,62 @@ class CoreTests(unittest.TestCase):
             asyncio.run(orchestrator.run_once())
 
         self.assertEqual(seen, [("ENG-2", False)])
+
+    def test_resume_runs_implementation_before_optimization(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Resume me",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": [{"name": "agent-running"}]},
+            }
+        )
+
+        class FakeLinear:
+            async def issue_context(self, _issue: object) -> str:
+                return "context"
+
+            async def comment(self, _issue_id: str, _body: str) -> None:
+                return None
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}), linear=FakeLinear())
+        calls: list[str] = []
+
+        async def fake_implement(*_args: object) -> str:
+            calls.append("implement")
+            return "implementation summary"
+
+        async def fake_optimize(*_args: object) -> str:
+            calls.append("optimize")
+            raise RuntimeError("stop after optimization starts")
+
+        def fake_changed_repos(_workspace: WorkspaceConfig) -> dict[str, RepoConfig]:
+            return workspace.repos
+
+        orchestrator._implement = fake_implement  # type: ignore[method-assign]
+        orchestrator._optimize = fake_optimize  # type: ignore[method-assign]
+        orchestrator.changed_repos = fake_changed_repos  # type: ignore[method-assign]
+
+        with patch.object(orchestrator, "checkout_existing_branch"):
+            with patch("linear_codex_orchestrator.orchestrator.changed_files", return_value=" M file.py"):
+                with self.assertRaisesRegex(RuntimeError, "stop after optimization starts"):
+                    asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=True))
+
+        self.assertEqual(calls, ["implement", "optimize"])
+
+    def test_resume_plan_continues_partial_implementation(self) -> None:
+        plan = resume_plan()
+
+        self.assertIn("Continue the implementation", plan)
+        self.assertIn("partial implementation work", plan)
 
     def test_resume_checks_out_existing_branch_without_resetting_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
