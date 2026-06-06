@@ -10,6 +10,7 @@ from .codex_cli import run_codex
 from .config import RepoConfig, Settings, WorkspaceConfig
 from .git_ops import (
     branch_name,
+    branch_exists,
     changed_files,
     checkout_branch,
     commit_all,
@@ -86,6 +87,17 @@ class Orchestrator:
             except Exception as exc:
                 log(f"{issue.identifier}: issue resume failed; daemon will continue: {exc}")
         if running_issues:
+            return
+
+        log("Polling Linear for interrupted in-progress issues with existing Codex branches")
+        interrupted_issues = await self.interrupted_issues()
+        log(f"Found {len(interrupted_issues)} interrupted issue(s)")
+        for issue in interrupted_issues:
+            try:
+                await self.process_issue(issue, resume=True)
+            except Exception as exc:
+                log(f"{issue.identifier}: interrupted issue resume failed; daemon will continue: {exc}")
+        if interrupted_issues:
             return
 
         log("Polling Linear for ready issues")
@@ -195,6 +207,30 @@ class Orchestrator:
                 f"No configured workspace entry for Linear team key {issue.team_key}."
             ) from exc
 
+    async def interrupted_issues(self) -> list[LinearIssue]:
+        candidates = await self.linear.ready_issues(
+            self.settings.in_progress_status,
+            None,
+            max(self.settings.max_issues_per_tick * 10, 10),
+            (self.settings.running_label, self.settings.blocked_label),
+            tuple(sorted(self.settings.workspace_map)),
+        )
+        resumable: list[LinearIssue] = []
+        for issue in candidates:
+            try:
+                workspace = self.resolve_workspace(issue)
+            except RuntimeError as exc:
+                log(f"Skipping interrupted candidate {issue.identifier}: {exc}")
+                continue
+            branch = branch_name(issue.identifier, issue.title)
+            if self.branch_exists_in_all_repos(workspace, branch):
+                resumable.append(issue)
+                if len(resumable) >= self.settings.max_issues_per_tick:
+                    break
+            else:
+                log(f"Skipping interrupted candidate {issue.identifier}: branch {branch} is not present in all repos")
+        return resumable
+
     async def _process_locked_issue(self, issue: LinearIssue, workspace: WorkspaceConfig, resume: bool = False) -> None:
         branch = branch_name(issue.identifier, issue.title)
         repo_list = ", ".join(workspace.repos)
@@ -300,7 +336,8 @@ class Orchestrator:
             log(f"{issue.identifier}: failed: {exc}")
             update_issue_status(issue, "Failed", error=str(exc))
             await self._try_linear_comment(issue, f"Codex orchestration failed:\n\n```text\n{exc}\n```")
-            await self._clear_running_label(issue)
+            if not resume:
+                await self._clear_running_label(issue)
             raise
 
         if not changed_repos:
@@ -392,11 +429,20 @@ class Orchestrator:
 
     def checkout_existing_branch(self, workspace: WorkspaceConfig, branch: str) -> None:
         missing: list[str] = []
+        failed: list[str] = []
         for repo_key, repo in workspace.repos.items():
-            if not checkout_branch(repo.path, branch):
+            if not branch_exists(repo.path, branch):
                 missing.append(repo_key)
+                continue
+            if not checkout_branch(repo.path, branch):
+                failed.append(repo_key)
         if missing:
             raise RuntimeError(f"Cannot resume because branch {branch} is missing in: {', '.join(missing)}")
+        if failed:
+            raise RuntimeError(f"Cannot resume because branch {branch} could not be checked out in: {', '.join(failed)}")
+
+    def branch_exists_in_all_repos(self, workspace: WorkspaceConfig, branch: str) -> bool:
+        return all(branch_exists(repo.path, branch) for repo in workspace.repos.values())
 
     async def _plan(self, issue: LinearIssue, workspace: WorkspaceConfig, issue_context: str) -> str:
         log_path = codex_log_path(issue.identifier, "planner")

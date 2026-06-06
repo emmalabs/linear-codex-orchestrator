@@ -35,6 +35,14 @@ def checkout_branch(repo_path: Path, branch: str) -> bool:
         return False
 
 
+def branch_exists(repo_path: Path, branch: str) -> bool:
+    try:
+        run_git(repo_path, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
 def has_changes(repo_path: Path) -> bool:
     return bool(run_git(repo_path, "status", "--porcelain"))
 
