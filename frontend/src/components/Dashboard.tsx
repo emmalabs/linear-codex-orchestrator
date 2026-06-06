@@ -68,6 +68,7 @@ export function DashboardView(props: {
             <Tabs.List grow>
               <Tabs.Tab value="issues">Linear Issues</Tabs.Tab>
               <Tabs.Tab value="prs">Pull Requests</Tabs.Tab>
+              <Tabs.Tab value="archive">Archive</Tabs.Tab>
             </Tabs.List>
             <Tabs.Panel value="issues">
               <ScrollArea.Autosize className="side-panel-scroll" type="auto">
@@ -86,6 +87,19 @@ export function DashboardView(props: {
               <ScrollArea.Autosize className="side-panel-scroll" type="auto">
                 <SummaryList emptyText="No PR status yet.">
                   {data.prs.map((pr) => (
+                    <PullRequestItem
+                      key={pr.key ?? pr.url ?? pr.title}
+                      onOpen={() => props.onSelectDetail({ kind: "pr", item: pr })}
+                      pr={pr}
+                    />
+                  ))}
+                </SummaryList>
+              </ScrollArea.Autosize>
+            </Tabs.Panel>
+            <Tabs.Panel value="archive">
+              <ScrollArea.Autosize className="side-panel-scroll" type="auto">
+                <SummaryList emptyText="No archived PRs yet.">
+                  {data.archived_prs.map((pr) => (
                     <PullRequestItem
                       key={pr.key ?? pr.url ?? pr.title}
                       onOpen={() => props.onSelectDetail({ kind: "pr", item: pr })}

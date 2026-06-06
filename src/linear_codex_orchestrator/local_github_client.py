@@ -138,6 +138,15 @@ class LocalGitHubClient:
                 ]
             )
 
+    async def pr_archive_status(self, repo: str, number: int) -> str:
+        try:
+            pr = _gh_api_json(f"repos/{repo}/pulls/{number}")[0]
+        except Exception:
+            return "Archived"
+        if pr.get("state") == "closed":
+            return "Merged" if pr.get("merged") else "Closed"
+        return "Archived"
+
     def _find_open_pr(self, repo: str, branch: str) -> dict[str, object] | None:
         raw = _run(
             [

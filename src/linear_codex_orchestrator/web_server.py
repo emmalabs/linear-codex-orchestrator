@@ -442,6 +442,7 @@ def status_index() -> dict[str, object]:
         payload = {}
     issues = payload.get("issues", {})
     prs = payload.get("prs", {})
+    archived_prs = payload.get("archived_prs", {})
     return {
         "issues": sorted(
             issues.values() if isinstance(issues, dict) else [],
@@ -451,6 +452,11 @@ def status_index() -> dict[str, object]:
         "prs": sorted(
             prs.values() if isinstance(prs, dict) else [],
             key=lambda item: str(item.get("updated_at", "")),
+            reverse=True,
+        ),
+        "archived_prs": sorted(
+            archived_prs.values() if isinstance(archived_prs, dict) else [],
+            key=lambda item: str(item.get("archived_at") or item.get("updated_at", "")),
             reverse=True,
         ),
     }

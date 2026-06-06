@@ -49,6 +49,7 @@ export function App() {
         const status = await statusResponse.json() as {
           issues?: IssueStatus[];
           prs?: PullRequestStatus[];
+          archived_prs?: PullRequestStatus[];
         };
         if (cancelled) {
           return;
@@ -56,6 +57,7 @@ export function App() {
         setData({
           issues: status.issues ?? [],
           prs: status.prs ?? [],
+          archived_prs: status.archived_prs ?? [],
           tasks,
           orchestration: orchestration.text ?? "",
           connected: true,

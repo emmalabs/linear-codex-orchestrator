@@ -150,6 +150,7 @@ class Orchestrator:
                     branch_prefix=self.settings.pr_feedback_branch_prefix,
                 )
                 log(f"{repo_key}: found {len(prs)} open PR(s) for feedback check")
+                await archive_stale_prs(self.github, repo.github, prs)
                 for pr in prs:
                     try:
                         await self.process_pr_feedback(repo_key, repo, pr)
@@ -1096,6 +1097,11 @@ def read_status() -> dict[str, object]:
     return {
         "issues": payload.get("issues", {}) if isinstance(payload.get("issues", {}), dict) else {},
         "prs": payload.get("prs", {}) if isinstance(payload.get("prs", {}), dict) else {},
+        "archived_prs": (
+            payload.get("archived_prs", {})
+            if isinstance(payload.get("archived_prs", {}), dict)
+            else {}
+        ),
     }
 
 
@@ -1141,11 +1147,14 @@ def update_pr_status(
 ) -> None:
     payload = read_status()
     prs = payload["prs"]
+    archived_prs = payload["archived_prs"]
     assert isinstance(prs, dict)
+    assert isinstance(archived_prs, dict)
     key = f"{pr.repo}#{pr.number}"
     current = prs.get(key, {})
     if not isinstance(current, dict):
         current = {}
+    archived_prs.pop(key, None)
     current.update(
         {
             "key": key,
@@ -1169,6 +1178,67 @@ def update_pr_status(
         current["feedback_count"] = feedback_count
     prs[key] = current
     write_status(payload)
+
+
+async def archive_stale_prs(
+    github: object,
+    repo: str,
+    open_prs: list[OpenPullRequest],
+) -> None:
+    payload = read_status()
+    prs = payload["prs"]
+    archived_prs = payload["archived_prs"]
+    assert isinstance(prs, dict)
+    assert isinstance(archived_prs, dict)
+
+    open_keys = {f"{pr.repo}#{pr.number}" for pr in open_prs}
+    stale_keys = [
+        key
+        for key, value in prs.items()
+        if key not in open_keys and isinstance(value, dict) and pr_entry_repo(key, value) == repo
+    ]
+    if not stale_keys:
+        return
+
+    archived_at = datetime.now().isoformat(timespec="seconds")
+    for key in stale_keys:
+        current = prs.pop(key)
+        assert isinstance(current, dict)
+        status = "Archived"
+        number = pr_entry_number(key, current)
+        if number is not None and hasattr(github, "pr_archive_status"):
+            try:
+                status = await github.pr_archive_status(repo, number)
+            except Exception:
+                status = "Archived"
+        current.update(
+            {
+                "status": status,
+                "archived_at": archived_at,
+                "updated_at": archived_at,
+            }
+        )
+        archived_prs[key] = current
+    write_status(payload)
+
+
+def pr_entry_repo(key: str, entry: dict[str, object]) -> str | None:
+    repo = entry.get("repo")
+    if isinstance(repo, str):
+        return repo
+    if "#" in key:
+        return key.rsplit("#", 1)[0]
+    return None
+
+
+def pr_entry_number(key: str, entry: dict[str, object]) -> int | None:
+    number = entry.get("number")
+    if isinstance(number, int):
+        return number
+    if isinstance(number, str) and number.isdigit():
+        return int(number)
+    match = re.search(r"#(\d+)$", key)
+    return int(match.group(1)) if match else None
 
 
 def workspace_status_context(workspace: WorkspaceConfig) -> dict[str, object]:

@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,6 +29,7 @@ from linear_codex_orchestrator.local_linear_client import LocalLinearClient, is_
 from linear_codex_orchestrator.log_summary import last_interesting_line, summarize_codex_log, tokens_used, write_log_summary
 from linear_codex_orchestrator.orchestrator import (
     Orchestrator,
+    archive_stale_prs,
     codex_log_path,
     implementation_comment,
     log_session_start,
@@ -450,6 +452,127 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(status["prs"]["acme/web#12"]["status"], "Ready for review")
         self.assertEqual(status["prs"]["acme/web#12"]["issue"], "ENG-1")
         self.assertEqual(status["prs"]["acme/web#12"]["repo_path"], "/tmp/workspace/web")
+        self.assertEqual(status["archived_prs"], {})
+
+    def test_archive_stale_prs_moves_only_missing_prs_for_repo(self) -> None:
+        class FakeGitHub:
+            async def pr_archive_status(self, _repo: str, number: int) -> str:
+                return "Merged" if number == 12 else "Closed"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "prs": {
+                            "acme/web#12": {
+                                "key": "acme/web#12",
+                                "repo": "acme/web",
+                                "number": 12,
+                                "status": "Ready",
+                                "updated_at": "2026-01-01T00:00:00",
+                            },
+                            "acme/web#13": {
+                                "key": "acme/web#13",
+                                "repo": "acme/web",
+                                "number": 13,
+                                "status": "Ready",
+                                "updated_at": "2026-01-01T00:00:01",
+                            },
+                        },
+                        "archived_prs": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                asyncio.run(
+                    archive_stale_prs(
+                        FakeGitHub(),
+                        "acme/web",
+                        [
+                            OpenPullRequest(
+                                repo="acme/web",
+                                number=13,
+                                url="https://github.com/acme/web/pull/13",
+                                title="Open",
+                                head_branch="codex/open",
+                                base_branch="main",
+                            )
+                        ],
+                    )
+                )
+                status = read_status()
+
+        self.assertIn("acme/web#13", status["prs"])
+        self.assertNotIn("acme/web#12", status["prs"])
+        self.assertEqual(status["archived_prs"]["acme/web#12"]["status"], "Merged")
+        self.assertIn("archived_at", status["archived_prs"]["acme/web#12"])
+
+    def test_archive_stale_prs_preserves_other_repos(self) -> None:
+        class FakeGitHub:
+            async def pr_archive_status(self, _repo: str, _number: int) -> str:
+                return "Merged"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "prs": {
+                            "acme/web#12": {"key": "acme/web#12", "repo": "acme/web", "number": 12},
+                            "acme/api#7": {"key": "acme/api#7", "repo": "acme/api", "number": 7},
+                        },
+                        "archived_prs": {
+                            "acme/old#1": {
+                                "key": "acme/old#1",
+                                "repo": "acme/old",
+                                "number": 1,
+                                "status": "Merged",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                asyncio.run(archive_stale_prs(FakeGitHub(), "acme/web", []))
+                status = read_status()
+
+        self.assertNotIn("acme/web#12", status["prs"])
+        self.assertIn("acme/api#7", status["prs"])
+        self.assertIn("acme/old#1", status["archived_prs"])
+
+    def test_archive_stale_prs_maps_merged_closed_and_lookup_failure(self) -> None:
+        class FakeGitHub:
+            async def pr_archive_status(self, _repo: str, number: int) -> str:
+                if number == 1:
+                    return "Merged"
+                if number == 2:
+                    return "Closed"
+                raise RuntimeError("lookup failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "prs": {
+                            "acme/web#1": {"key": "acme/web#1", "repo": "acme/web", "number": 1},
+                            "acme/web#2": {"key": "acme/web#2", "repo": "acme/web", "number": 2},
+                            "acme/web#3": {"key": "acme/web#3", "repo": "acme/web", "number": 3},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                asyncio.run(archive_stale_prs(FakeGitHub(), "acme/web", []))
+                status = read_status()
+
+        self.assertEqual(status["archived_prs"]["acme/web#1"]["status"], "Merged")
+        self.assertEqual(status["archived_prs"]["acme/web#2"]["status"], "Closed")
+        self.assertEqual(status["archived_prs"]["acme/web#3"]["status"], "Archived")
 
     def test_web_log_index_and_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -586,7 +709,9 @@ class CoreTests(unittest.TestCase):
                     '"workspace_path":"/tmp/workspace","repos":[{"key":"web","path":"/tmp/workspace/web"}],'
                     '"updated_at":"2026-01-01T00:00:00"}},'
                     '"prs":{"acme/web#1":{"key":"acme/web#1","status":"Ready","repo_path":"/tmp/workspace/web",'
-                    '"updated_at":"2026-01-01T00:00:01"}}}',
+                    '"updated_at":"2026-01-01T00:00:01"}},'
+                    '"archived_prs":{"acme/web#2":{"key":"acme/web#2","status":"Merged",'
+                    '"archived_at":"2026-01-01T00:00:02"}}}',
                     encoding="utf-8",
                 )
                 summary = status_index()
@@ -594,6 +719,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(summary["issues"][0]["project"], "Project X")
         self.assertEqual(summary["prs"][0]["key"], "acme/web#1")
         self.assertEqual(summary["prs"][0]["repo_path"], "/tmp/workspace/web")
+        self.assertEqual(summary["archived_prs"][0]["key"], "acme/web#2")
 
     def test_web_config_index_reads_sqlite_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
