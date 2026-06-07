@@ -9,6 +9,7 @@ from .models import OpenPullRequest, PullRequest, PullRequestApproval, PullReque
 
 
 PR_FEEDBACK_COMMENT_MARKER = "<!-- codex-pr-feedback-worker -->"
+CODEX_REVIEW_AUTHOR_LOGINS = {"chatgpt-codex-connector[bot]", "codex"}
 
 
 class LocalGitHubClient:
@@ -260,7 +261,9 @@ class LocalGitHubClient:
 def is_codex_approval_review(item: dict[str, object]) -> bool:
     state = str(item.get("state") or "").upper()
     body = str(item.get("body") or "")
-    return state == "APPROVED" and "👍" in body
+    user = item.get("user") or {}
+    author = str(user.get("login", "")) if isinstance(user, dict) else ""
+    return state == "APPROVED" and "👍" in body and author in CODEX_REVIEW_AUTHOR_LOGINS
 
 
 def codex_approval_reviews(items: list[dict[str, object]]) -> list[PullRequestApproval]:

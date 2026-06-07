@@ -192,46 +192,68 @@ class Orchestrator:
                 log(f"Skipping {repo.github}#{pr.number}: PR feedback lock is already held")
                 return
             approval = await latest_codex_approval(self.github, repo.github, pr.number)
-            mapped_issue = issue_identifier_for_pr(pr) if approval else None
-            if approval:
-                if mapped_issue:
-                    changed = update_issue_codex_approval(mapped_issue, pr, approval)
-                    if changed:
-                        log(f"{repo.github}#{pr.number}: marked {mapped_issue} as Codex approved")
-                else:
-                    update_pr_status(
-                        pr,
-                        "Codex approved",
-                        repo_key=repo_key,
-                        repo_path=repo.path,
-                        feedback_count=0,
-                        codex_approval=approval,
-                    )
-                    log(f"{repo.github}#{pr.number}: Codex approved with no linked issue")
+            mapped_issue = issue_identifier_for_pr(pr)
             feedback = await self.github.pr_feedback(repo.github, pr.number)
             state = pr_feedback_state(self.settings.lock_dir, repo.github, pr.number)
             seen = read_processed_feedback(state)
             new_feedback = [item for item in feedback if item.key not in seen]
             if not new_feedback:
                 log(f"{repo.github}#{pr.number}: no new PR feedback")
-                if not approval or mapped_issue:
+                if approval:
+                    if mapped_issue:
+                        changed = update_issue_codex_approval(mapped_issue, pr, approval)
+                        if changed:
+                            log(f"{repo.github}#{pr.number}: marked {mapped_issue} as Codex approved")
+                    else:
+                        log(f"{repo.github}#{pr.number}: Codex approved with no linked issue")
+                    update_pr_status(
+                        pr,
+                        "No new feedback" if mapped_issue else "Codex approved",
+                        repo_key=repo_key,
+                        repo_path=repo.path,
+                        feedback_count=0,
+                        issue=mapped_issue,
+                        codex_approval=approval,
+                    )
+                else:
+                    if mapped_issue and clear_issue_codex_approval(mapped_issue, pr):
+                        log(f"{repo.github}#{pr.number}: cleared stale Codex approval for {mapped_issue}")
                     update_pr_status(
                         pr,
                         "No new feedback",
                         repo_key=repo_key,
                         repo_path=repo.path,
                         feedback_count=0,
+                        clear_codex_approval=True,
                     )
                 return
             log(f"{repo.github}#{pr.number}: found {len(new_feedback)} new feedback item(s)")
-            update_pr_status(pr, "Feedback found", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+            if mapped_issue and clear_issue_codex_approval(mapped_issue, pr):
+                log(f"{repo.github}#{pr.number}: cleared Codex approval for {mapped_issue} while handling feedback")
+            update_pr_status(
+                pr,
+                "Feedback found",
+                repo_key=repo_key,
+                repo_path=repo.path,
+                feedback_count=len(new_feedback),
+                issue=mapped_issue if approval else None,
+                clear_codex_approval=True,
+            )
             if self.settings.dry_run:
                 log(f"[dry-run] Would address PR feedback on {repo.github}#{pr.number}")
                 return
 
             run_git(repo.path, "fetch", "origin", pr.head_branch)
             run_git(repo.path, "checkout", "-B", pr.head_branch, f"origin/{pr.head_branch}")
-            update_pr_status(pr, "Fixing feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+            update_pr_status(
+                pr,
+                "Fixing feedback",
+                repo_key=repo_key,
+                repo_path=repo.path,
+                feedback_count=len(new_feedback),
+                issue=mapped_issue if approval else None,
+                clear_codex_approval=True,
+            )
             summary = await self._fix_pr_feedback(repo_key, repo, pr, new_feedback)
             if has_changes(repo.path):
                 log(f"{repo.github}#{pr.number}: committing PR feedback fixes")
@@ -239,7 +261,15 @@ class Orchestrator:
                 log(f"{repo.github}#{pr.number}: pushing PR feedback fixes")
                 push_branch(repo.path, pr.head_branch)
                 await self.github.comment_on_pr(repo.github, pr.number, pr_feedback_comment(summary))
-                update_pr_status(pr, "Feedback addressed", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+                update_pr_status(
+                    pr,
+                    "Feedback addressed",
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=len(new_feedback),
+                    issue=mapped_issue if approval else None,
+                    clear_codex_approval=True,
+                )
             else:
                 log(f"{repo.github}#{pr.number}: no changes after PR feedback pass")
                 await self.github.comment_on_pr(
@@ -247,7 +277,15 @@ class Orchestrator:
                     pr.number,
                     pr_feedback_no_changes_comment(summary),
                 )
-                update_pr_status(pr, "Checked feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+                update_pr_status(
+                    pr,
+                    "Checked feedback",
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=len(new_feedback),
+                    issue=mapped_issue if approval else None,
+                    clear_codex_approval=True,
+                )
             write_processed_feedback(state, seen | {item.key for item in new_feedback})
 
     async def process_issue(self, issue: LinearIssue, resume: bool = False) -> None:
@@ -1204,6 +1242,7 @@ def update_pr_status(
     repo_path: Path | None = None,
     feedback_count: int | None = None,
     codex_approval: PullRequestApproval | None = None,
+    clear_codex_approval: bool = False,
 ) -> None:
     payload = read_status()
     prs = payload["prs"]
@@ -1235,6 +1274,11 @@ def update_pr_status(
         current["repo_path"] = str(repo_path)
     if feedback_count is not None:
         current["feedback_count"] = feedback_count
+    if clear_codex_approval:
+        current.pop("codex_approved", None)
+        current.pop("codex_approved_at", None)
+        current.pop("codex_approval_url", None)
+        current.pop("codex_approved_pr", None)
     if codex_approval:
         current["codex_approved"] = True
         current["codex_approved_at"] = (
@@ -1293,6 +1337,28 @@ def update_issue_codex_approval(
     if not changed:
         return False
     current.update(next_values)
+    issues[issue_identifier] = current
+    write_status(payload)
+    return True
+
+
+def clear_issue_codex_approval(issue_identifier: str, pr: OpenPullRequest) -> bool:
+    payload = read_status()
+    issues = payload["issues"]
+    assert isinstance(issues, dict)
+    current = issues.get(issue_identifier, {})
+    if not isinstance(current, dict) or current.get("codex_approved_pr") != pr.url:
+        return False
+    for key in (
+        "codex_approved",
+        "codex_approved_at",
+        "codex_approval_url",
+        "codex_approved_pr",
+    ):
+        current.pop(key, None)
+    if current.get("status") == "Codex approved":
+        current["status"] = "PR ready"
+    current["updated_at"] = datetime.now().isoformat(timespec="seconds")
     issues[issue_identifier] = current
     write_status(payload)
     return True
