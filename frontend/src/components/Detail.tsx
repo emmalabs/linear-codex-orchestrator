@@ -11,6 +11,7 @@ import {
   Modal,
   Paper,
   Select,
+  SimpleGrid,
   Stack,
   Table,
   Text,
@@ -108,6 +109,7 @@ export function DetailPage(props: {
           </Paper>
 
           {props.detail.kind === "issue" ? <IssueRepositories issue={props.detail.item} /> : null}
+          {props.detail.kind === "issue" ? <IssueBrief issue={props.detail.item} /> : null}
 
           <Group className="timeline-heading" justify="space-between">
             <Text fw={800}>Task timeline</Text>
@@ -124,7 +126,7 @@ export function DetailPage(props: {
           )}
         </Stack>
 
-        <DetailProperties detail={props.detail} />
+        <DetailProperties detail={props.detail} tasks={matchingTasks} />
       </Box>
     </Stack>
   );
@@ -231,10 +233,64 @@ function IssueRepositories({ issue }: { issue: IssueStatus }) {
   );
 }
 
-function DetailProperties({ detail }: { detail: SelectedDetail }) {
+function IssueBrief({ issue }: { issue: IssueStatus }) {
+  const plannerBrief = cleanBriefText(issue.planner_brief);
+  const issueContext = cleanBriefText(issue.issue_context);
+  const description = cleanBriefText(issue.description);
+  const sourceContext = issueContext || description;
+  const prePlanningBrief = issueContext || description;
+  const statusLabel = issueBriefStatusLabel(issue.context_status, Boolean(plannerBrief));
+
+  if (!plannerBrief && !prePlanningBrief) {
+    return null;
+  }
+
+  return (
+    <Paper className="issue-brief" p="md">
+      <Stack gap="sm">
+        <Group justify="space-between" gap="xs">
+          <Text fw={800}>Issue brief</Text>
+          <Badge color={plannerBrief ? "green" : "cyan"} size="sm" variant="light">{statusLabel}</Badge>
+        </Group>
+        <Box className="formatted-log-message issue-brief-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{plannerBrief || prePlanningBrief}</ReactMarkdown>
+        </Box>
+        {plannerBrief && sourceContext ? (
+          <Accordion className="source-context-accordion" variant="contained">
+            <Accordion.Item value="source-context">
+              <Accordion.Control>Source context</Accordion.Control>
+              <Accordion.Panel>
+                <Box className="formatted-log-message issue-source-context">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{sourceContext}</ReactMarkdown>
+                </Box>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
+        ) : null}
+      </Stack>
+    </Paper>
+  );
+}
+
+function cleanBriefText(value?: string) {
+  return value?.trim() || "";
+}
+
+function issueBriefStatusLabel(contextStatus?: string, hasPlannerBrief = false) {
+  if (hasPlannerBrief || contextStatus === "planned") {
+    return "Planned";
+  }
+  if (contextStatus === "linear_context") {
+    return "Planning";
+  }
+  return "Preparing";
+}
+
+function DetailProperties({ detail, tasks }: { detail: SelectedDetail; tasks: TaskLog[] }) {
   if (detail.kind === "issue") {
     const issue = detail.item;
     const prs = issuePullRequests(issue);
+    const metrics = runMetrics(tasks);
     return (
       <Paper className="detail-properties" p="md">
         <Stack gap="sm">
@@ -251,6 +307,16 @@ function DetailProperties({ detail }: { detail: SelectedDetail }) {
               </Stack>
             ) : null}
           </DetailTile>
+          <Box className="run-metrics">
+            <Text fw={800}>Run metrics</Text>
+            <SimpleGrid cols={2} spacing="xs">
+              <MetricTile label="Tasks" value={formatCount(metrics.tasks)} />
+              <MetricTile label="Logs" value={formatCount(metrics.logs)} />
+              <MetricTile label="Files changed" value={formatCount(metrics.filesChanged)} />
+              <MetricTile label="Tokens used" value={formatCount(metrics.tokensUsed)} />
+            </SimpleGrid>
+            <DetailTile label="Last activity" value={metrics.lastActivity} />
+          </Box>
         </Stack>
       </Paper>
     );
@@ -269,6 +335,48 @@ function DetailProperties({ detail }: { detail: SelectedDetail }) {
         <DetailTile label="Updated" value={pr.updated_at} />
       </Stack>
     </Paper>
+  );
+}
+
+type RunMetrics = {
+  tasks: number;
+  logs: number;
+  filesChanged: number;
+  tokensUsed: number;
+  lastActivity?: string;
+};
+
+function runMetrics(tasks: TaskLog[]): RunMetrics {
+  let logs = 0;
+  let filesChanged = 0;
+  let tokensUsed = 0;
+  let lastModified = 0;
+  for (const task of tasks) {
+    logs += task.log_count || 0;
+    filesChanged += task.file_count || 0;
+    tokensUsed += task.tokens_used || 0;
+    lastModified = Math.max(lastModified, task.modified || 0);
+  }
+  return {
+    tasks: tasks.length,
+    logs,
+    filesChanged,
+    tokensUsed,
+    lastActivity: lastModified ? formatTimestamp(lastModified) : undefined
+  };
+}
+
+function formatTimestamp(seconds: number) {
+  const date = new Date(seconds * 1000);
+  return `${date.toLocaleTimeString()} · ${date.toLocaleDateString()}`;
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <Box className="metric-tile">
+      <Text c="dimmed" fw={700} size="xs" tt="uppercase">{label}</Text>
+      <Text fw={800} size="lg">{value}</Text>
+    </Box>
   );
 }
 
@@ -301,14 +409,6 @@ function TaskDetails({ task }: { task: TaskLog }) {
           </Group>
           <Text c="dimmed" className="timeline-summary" size="sm">{task.headline || "No summary yet."}</Text>
         </Box>
-        <Group className="timeline-stats" gap="md">
-          <Text c="dimmed" size="xs"><strong>{task.file_count}</strong> files</Text>
-          <Text c="dimmed" size="xs"><strong>{formatCount(task.tokens_used)}</strong> tokens</Text>
-          <Text c="dimmed" size="xs"><strong>{task.log_count}</strong> logs</Text>
-        </Group>
-        <Text c="dimmed" size="xs">
-          Updated {new Date(task.modified * 1000).toLocaleTimeString()} · {new Date(task.modified * 1000).toLocaleDateString()}
-        </Text>
       </Stack>
       <Stack className="timeline-stage-list" gap={0}>
         {task.stages.map((stage) => (

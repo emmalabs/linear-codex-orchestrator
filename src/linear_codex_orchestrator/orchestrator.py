@@ -270,7 +270,13 @@ class Orchestrator:
         repo_list = ", ".join(workspace.repos)
         mode = "resuming" if resume else "processing"
         log(f"{mode.capitalize()} {issue.identifier} in {workspace.path} across: {repo_list}")
-        update_issue_status(issue, "Resuming" if resume else "Starting", **workspace_status_context(workspace))
+        update_issue_status(
+            issue,
+            "Resuming" if resume else "Starting",
+            description=issue.description,
+            context_status="metadata",
+            **workspace_status_context(workspace),
+        )
         if self.settings.dry_run:
             action = "resume branch" if resume else "create branch"
             log(f"[dry-run] Would {action} {branch} and run Codex across {repo_list}")
@@ -292,6 +298,13 @@ class Orchestrator:
         try:
             log(f"{issue.identifier}: reading full Linear issue context")
             issue_context = await self.linear.issue_context(issue)
+            update_issue_status(
+                issue,
+                "Linear context loaded",
+                issue_context=issue_context,
+                context_status="linear_context",
+                **workspace_status_context(workspace),
+            )
             run_state = read_issue_run_state(issue.id, workspace.path) if resume else None
             if resume:
                 log(f"{issue.identifier}: resuming existing branch {branch}")
@@ -344,6 +357,13 @@ class Orchestrator:
                 update_issue_status(issue, "Planning")
                 write_issue_run_state(issue.id, issue.identifier, workspace.path, branch, "planning")
                 plan = await self._plan(issue, workspace, issue_context)
+                update_issue_status(
+                    issue,
+                    "Planning complete",
+                    planner_brief=plan,
+                    context_status="planned",
+                    **workspace_status_context(workspace),
+                )
                 log(f"{issue.identifier}: preparing branch {branch} in {len(workspace.repos)} repo(s)")
                 update_issue_status(issue, "Preparing branches")
                 for repo_key, repo in workspace.repos.items():

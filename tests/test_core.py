@@ -35,7 +35,6 @@ from linear_codex_orchestrator.orchestrator import (
     codex_log_path,
     implementation_comment,
     log_session_start,
-    orchestration_log_path,
     planner_block_reason,
     planner_blocked_comment,
     planner_is_blocked,
@@ -44,7 +43,6 @@ from linear_codex_orchestrator.orchestrator import (
     read_status,
     resume_plan,
     start_comment,
-    status_path,
     truncate_text,
     update_issue_status,
     update_pr_status,
@@ -476,6 +474,73 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(status["prs"]["acme/web#12"]["repo_path"], "/tmp/workspace/web")
         self.assertEqual(status["archived_prs"], {})
 
+    def test_orchestrator_enriches_issue_status_progressively(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "Raw Linear description",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+
+        class FakeLinear:
+            async def issue_context(self, _issue: object) -> str:
+                return "# ENG-1: Ship it\n\nFull Linear context"
+
+            async def comment(self, _issue_id: str, _body: str) -> None:
+                return None
+
+            async def remove_label(self, _issue_id: str, _label: str) -> None:
+                return None
+
+        class TestOrchestrator(Orchestrator):
+            def dirty_workspace_repos(self, _workspace: WorkspaceConfig) -> list[str]:
+                return []
+
+            async def _plan(self, _issue: object, _workspace: object, _issue_context: str) -> str:
+                return "Planner brief"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workspace = WorkspaceConfig(
+                path=tmp_path,
+                repos={"web": RepoConfig("acme/web", tmp_path / "web", "main")},
+            )
+            settings = Settings(workspace_map={"ENG": workspace}, lock_dir=tmp_path / "locks")
+            status_file = tmp_path / "status.json"
+            orchestrator = TestOrchestrator(settings, linear=FakeLinear(), github=object())
+
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status_file):
+                with patch("linear_codex_orchestrator.orchestrator.ensure_branch", side_effect=RuntimeError("stop after plan")):
+                    with patch("linear_codex_orchestrator.orchestrator.update_issue_status", wraps=update_issue_status) as updates:
+                        with self.assertRaisesRegex(RuntimeError, "stop after plan"):
+                            asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
+                        status = read_status()
+
+        update_steps = [
+            (call.args[1], call.kwargs)
+            for call in updates.call_args_list
+            if call.args and call.args[0] == issue
+        ]
+        self.assertEqual(update_steps[0][0], "Starting")
+        self.assertEqual(update_steps[0][1]["description"], "Raw Linear description")
+        self.assertEqual(update_steps[0][1]["context_status"], "metadata")
+        self.assertEqual(update_steps[1][0], "Linear context loaded")
+        self.assertEqual(update_steps[1][1]["issue_context"], "# ENG-1: Ship it\n\nFull Linear context")
+        self.assertEqual(update_steps[1][1]["context_status"], "linear_context")
+        planned_step = next(step for step in update_steps if step[0] == "Planning complete")
+        self.assertEqual(planned_step[1]["planner_brief"], "Planner brief")
+        self.assertEqual(planned_step[1]["context_status"], "planned")
+        self.assertEqual(status["issues"]["ENG-1"]["description"], "Raw Linear description")
+        self.assertEqual(status["issues"]["ENG-1"]["issue_context"], "# ENG-1: Ship it\n\nFull Linear context")
+        self.assertEqual(status["issues"]["ENG-1"]["planner_brief"], "Planner brief")
+        self.assertEqual(status["issues"]["ENG-1"]["context_status"], "planned")
+
     def test_archive_stale_prs_moves_only_missing_prs_for_repo(self) -> None:
         class FakeGitHub:
             async def pr_archive_status(self, _repo: str, number: int) -> str:
@@ -713,6 +778,21 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(tasks[1]["key"], "eng-75")
         self.assertEqual(tasks[1]["log_count"], 2)
         self.assertEqual(len(tasks[1]["stages"]), 2)
+
+    def test_web_task_index_keeps_latest_stage_headline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            older = tmp_path / "20260517-090000-eng-75-planner.log"
+            newer = tmp_path / "20260517-091000-eng-75-review.log"
+            with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                older.write_text("tokens used\n1\nOlder planner headline.", encoding="utf-8")
+                newer.write_text("tokens used\n2\nLatest review headline.", encoding="utf-8")
+                os.utime(older, (1_779_000_000, 1_779_000_000))
+                os.utime(newer, (1_779_003_600, 1_779_003_600))
+
+                tasks = task_index()
+
+        self.assertEqual(tasks[0]["headline"], "Latest review headline.")
 
     def test_task_from_log_name_extracts_linear_and_pr_feedback_tasks(self) -> None:
         self.assertEqual(task_from_log_name("20260517-090000-eng-75-review.log")["key"], "eng-75")

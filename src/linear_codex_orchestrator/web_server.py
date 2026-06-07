@@ -508,7 +508,7 @@ def task_index() -> list[dict[str, object]]:
             tokens = summary.get("tokens_used")
             if isinstance(tokens, (int, float)):
                 current["tokens_used"] = float(current["tokens_used"]) + float(tokens)
-            if summary.get("headline"):
+            if summary.get("headline") and not current.get("headline"):
                 current["headline"] = summary["headline"]
     for task in tasks.values():
         stages = task["stages"]
