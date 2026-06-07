@@ -175,9 +175,13 @@ class Orchestrator:
         log("Checking Linear issue comments for new feedback")
         candidates = await self.linear_feedback_candidates()
         log(f"Found {len(candidates)} Linear issue feedback candidate(s)")
+        processed = 0
         for issue in candidates:
+            if processed >= self.settings.max_issues_per_tick:
+                break
             try:
-                await self.process_linear_feedback(issue)
+                if await self.process_linear_feedback(issue):
+                    processed += 1
             except Exception as exc:
                 log(f"{issue.identifier}: Linear feedback processing failed; daemon will continue: {exc}")
         log("Linear feedback check complete")
@@ -325,24 +329,24 @@ class Orchestrator:
                 )
             write_processed_feedback(state, seen | {item.key for item in new_feedback})
 
-    async def process_linear_feedback(self, issue: LinearIssue) -> None:
+    async def process_linear_feedback(self, issue: LinearIssue) -> bool:
         if self.settings.running_label in issue.labels or self.settings.blocked_label in issue.labels:
             log(f"Skipping {issue.identifier}: running or blocked label is present")
-            return
+            return False
         try:
             workspace = self.resolve_workspace(issue)
         except RuntimeError as exc:
             log(f"Skipping {issue.identifier}: {exc}")
-            return
-        branch = branch_name(issue.identifier, issue.title)
+            return False
+        branch = self.linear_feedback_branch(issue, workspace)
         if not self.linear_feedback_branch_available(workspace, branch):
             log(f"Skipping {issue.identifier}: branch {branch} is not available in any repo")
-            return
+            return False
         lock_name = f"{issue.team_key}:{workspace.path}"
         with lock_for_repo(self.settings.lock_dir, lock_name) as lock:
             if not lock.acquired:
                 log(f"Skipping {issue.identifier}: workspace lock is already held")
-                return
+                return False
             comments = await self.linear.issue_comments(issue)
             state = linear_feedback_state(self.settings.lock_dir, issue.identifier)
             seen = read_processed_feedback(state)
@@ -350,20 +354,21 @@ class Orchestrator:
             if not feedback:
                 log(f"{issue.identifier}: no new Linear feedback")
                 update_issue_linear_feedback_status(issue, "No new Linear feedback", 0)
-                return
+                return False
             log(f"{issue.identifier}: found {len(feedback)} new Linear feedback comment(s)")
             update_issue_linear_feedback_status(issue, "Linear feedback found", len(feedback))
             if self.settings.dry_run:
                 log(f"[dry-run] Would address Linear feedback on {issue.identifier}")
-                return
+                return True
             dirty_repos = self.dirty_workspace_repos(workspace)
             if dirty_repos:
                 joined = ", ".join(dirty_repos)
                 log(f"Skipping {issue.identifier}: workspace has uncommitted changes in: {joined}")
                 update_issue_linear_feedback_status(issue, "Workspace dirty", len(feedback))
-                return
+                return True
             issue_context = await self.linear.issue_context(issue)
             self.checkout_existing_branch_from_origin(workspace, branch)
+            before_heads = self.repo_heads(workspace)
             update_issue_linear_feedback_status(issue, "Fixing Linear feedback", len(feedback))
             summary = await self._fix_linear_feedback(
                 issue,
@@ -372,7 +377,7 @@ class Orchestrator:
                 branch,
                 feedback,
             )
-            changed_repos = self.changed_repos(workspace)
+            changed_repos = self.changed_repos_since_heads(workspace, before_heads)
             prs: list[PullRequest] = []
             for repo_key, repo in changed_repos.items():
                 if has_changes(repo.path):
@@ -418,6 +423,7 @@ class Orchestrator:
                 await self._try_linear_comment(issue, linear_feedback_no_changes_comment(summary))
                 update_issue_linear_feedback_status(issue, "Checked Linear feedback", len(feedback))
             write_processed_feedback(state, seen | {item.key for item in feedback})
+            return True
 
     async def process_issue(self, issue: LinearIssue, resume: bool = False) -> None:
         try:
@@ -823,6 +829,29 @@ class Orchestrator:
             if has_changes(repo.path) or has_commits_since_base(repo.path, repo.base)
         }
 
+    def changed_repos_since_heads(
+        self,
+        workspace: WorkspaceConfig,
+        before_heads: dict[str, str],
+    ) -> dict[str, RepoConfig]:
+        return {
+            repo_key: repo
+            for repo_key, repo in workspace.repos.items()
+            if has_changes(repo.path) or self.repo_head(repo) != before_heads.get(repo_key, "")
+        }
+
+    def repo_heads(self, workspace: WorkspaceConfig) -> dict[str, str]:
+        return {
+            repo_key: self.repo_head(repo)
+            for repo_key, repo in workspace.repos.items()
+        }
+
+    def repo_head(self, repo: RepoConfig) -> str:
+        try:
+            return run_git(repo.path, "rev-parse", "HEAD")
+        except Exception:
+            return ""
+
     def dirty_workspace_repos(self, workspace: WorkspaceConfig) -> list[str]:
         return [
             repo_key
@@ -900,6 +929,32 @@ class Orchestrator:
             branch_exists(repo.path, branch) or remote_branch_exists(repo.path, branch)
             for repo in workspace.repos.values()
         )
+
+    def linear_feedback_branch(self, issue: LinearIssue, workspace: WorkspaceConfig) -> str:
+        status_branch = self.linear_feedback_status_branch(issue, workspace)
+        if status_branch:
+            return status_branch
+        return branch_name(issue.identifier, issue.title)
+
+    def linear_feedback_status_branch(self, issue: LinearIssue, workspace: WorkspaceConfig) -> str:
+        payload = read_status()
+        prs = payload["prs"]
+        assert isinstance(prs, dict)
+        repo_paths = {str(repo.path) for repo in workspace.repos.values()}
+        repo_names = {repo.github for repo in workspace.repos.values()}
+        for value in prs.values():
+            if not isinstance(value, dict) or value.get("archived"):
+                continue
+            if str(value.get("issue") or "").strip().upper() != issue.identifier.upper():
+                continue
+            repo_path = str(value.get("repo_path") or "")
+            repo_name = str(value.get("repo") or "")
+            if repo_path not in repo_paths and repo_name not in repo_names:
+                continue
+            branch = str(value.get("branch") or "").strip()
+            if branch and self.linear_feedback_branch_available(workspace, branch):
+                return branch
+        return ""
 
     async def seed_linear_feedback_state(self, issue: LinearIssue) -> None:
         state = linear_feedback_state(self.settings.lock_dir, issue.identifier)
