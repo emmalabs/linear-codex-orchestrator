@@ -18,6 +18,7 @@ from .git_ops import (
     has_changes,
     has_commits_since_base,
     push_branch,
+    remote_branch_exists,
     run_git,
 )
 from .local_github_client import LocalGitHubClient
@@ -770,7 +771,7 @@ class Orchestrator:
 
         log(f"{issue.identifier}: posting ready-for-review PR links and moving to {self.settings.in_review_status}")
         await self._try_linear_comment(issue, pr_links_comment(prs))
-        await self.seed_linear_feedback_state(issue)
+        await self._try_seed_linear_feedback_state(issue)
         await self._try_linear_action(
             issue,
             f"move to {self.settings.in_review_status}",
@@ -852,6 +853,11 @@ class Orchestrator:
     def checkout_existing_branch_from_origin(self, workspace: WorkspaceConfig, branch: str) -> None:
         failed: list[str] = []
         for repo_key, repo in workspace.repos.items():
+            if not remote_branch_exists(repo.path, branch):
+                log(f"{repo_key}: branch {branch} has no origin branch; using local branch")
+                if not checkout_branch(repo.path, branch):
+                    failed.append(repo_key)
+                continue
             try:
                 run_git(repo.path, "fetch", "origin", branch)
                 run_git(repo.path, "checkout", "-B", branch, f"origin/{branch}")
@@ -876,6 +882,17 @@ class Orchestrator:
             f"{issue.identifier}: seeded Linear feedback state "
             f"with {len(baseline)} existing comment(s)"
         )
+
+    async def _try_seed_linear_feedback_state(self, issue: LinearIssue) -> bool:
+        try:
+            await self.seed_linear_feedback_state(issue)
+            return True
+        except Exception as exc:
+            log(
+                f"{issue.identifier}: failed to seed Linear feedback state; "
+                f"daemon will continue: {exc}"
+            )
+            return False
 
     async def _plan(self, issue: LinearIssue, workspace: WorkspaceConfig, issue_context: str) -> str:
         log_path = codex_log_path(issue.identifier, "planner")

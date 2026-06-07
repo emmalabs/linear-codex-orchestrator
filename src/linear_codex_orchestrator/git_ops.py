@@ -43,6 +43,16 @@ def branch_exists(repo_path: Path, branch: str) -> bool:
         return False
 
 
+def remote_branch_exists(repo_path: Path, branch: str) -> bool:
+    try:
+        run_git(repo_path, "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}")
+        return True
+    except subprocess.CalledProcessError as exc:
+        if exc.returncode != 2:
+            raise
+        return False
+
+
 def has_changes(repo_path: Path) -> bool:
     return bool(run_git(repo_path, "status", "--porcelain"))
 
