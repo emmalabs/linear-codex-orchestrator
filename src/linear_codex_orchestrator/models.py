@@ -41,6 +41,7 @@ class OpenPullRequest:
     title: str
     head_branch: str
     base_branch: str
+    head_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,16 @@ class PullRequestFeedback:
     body: str
     url: str
     path: str | None = None
+
+
+@dataclass(frozen=True)
+class PullRequestApproval:
+    key: str
+    author: str
+    submitted_at: str
+    url: str
+    body: str
+    commit_id: str = ""
 
 
 @dataclass(frozen=True)

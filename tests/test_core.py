@@ -18,7 +18,13 @@ from linear_codex_orchestrator.config import (
     write_config_file,
 )
 from linear_codex_orchestrator.git_ops import branch_name, has_commits_since_base, run_git
-from linear_codex_orchestrator.local_github_client import pull_request_number_from_url
+from linear_codex_orchestrator.local_github_client import (
+    LocalGitHubClient,
+    codex_approval_reviews,
+    is_codex_approval_review,
+    parse_gh_api_json,
+    pull_request_number_from_url,
+)
 from linear_codex_orchestrator.linear_api_client import (
     LinearApiClient,
     issue_from_node,
@@ -32,26 +38,35 @@ from linear_codex_orchestrator.orchestrator import (
     Orchestrator,
     archive_stale_prs,
     archive_pr_status,
+    clear_issue_codex_approval,
     codex_log_path,
     implementation_comment,
+    latest_codex_approval,
     log_session_start,
     planner_block_reason,
     planner_blocked_comment,
     planner_is_blocked,
     pr_feedback_issue_identifier,
     pr_feedback_prompt,
+    parse_issue_identifier,
     read_processed_feedback,
     read_status,
     resume_plan,
     start_comment,
     truncate_text,
+    update_issue_codex_approval,
     update_issue_status,
     update_pr_feedback_status,
     update_pr_status,
     workspace_status_context,
     write_processed_feedback,
 )
-from linear_codex_orchestrator.models import OpenPullRequest, PullRequestFeedback, parse_linear_issue
+from linear_codex_orchestrator.models import (
+    OpenPullRequest,
+    PullRequestApproval,
+    PullRequestFeedback,
+    parse_linear_issue,
+)
 from linear_codex_orchestrator.models import LinearTeam
 from linear_codex_orchestrator.locks import lock_file_is_stale, lock_for_repo
 from linear_codex_orchestrator.prompt_templates import render_prompt
@@ -410,6 +425,111 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(pull_request_number_from_url("https://github.com/acme/web/pull/42#discussion"), 42)
         self.assertEqual(pull_request_number_from_url("https://github.com/acme/web/compare/main...branch"), 0)
 
+    def test_codex_approval_reviews_require_approved_state_and_thumb(self) -> None:
+        approved = {
+            "id": 1,
+            "state": "APPROVED",
+            "body": "Looks good 👍",
+            "submitted_at": "2026-06-07T08:00:00Z",
+            "html_url": "https://github.com/acme/web/pull/1#pullrequestreview-1",
+            "user": {"login": "codex"},
+        }
+        approved_without_thumb = {
+            "id": 2,
+            "state": "APPROVED",
+            "body": "Looks good",
+            "submitted_at": "2026-06-07T08:01:00Z",
+        }
+        commented_with_thumb = {
+            "id": 3,
+            "state": "COMMENTED",
+            "body": "Needs work 👍",
+            "submitted_at": "2026-06-07T08:02:00Z",
+            "user": {"login": "codex"},
+        }
+        human_approved_with_thumb = {
+            "id": 4,
+            "state": "APPROVED",
+            "body": "Looks good 👍",
+            "submitted_at": "2026-06-07T08:03:00Z",
+            "user": {"login": "human-reviewer"},
+        }
+
+        self.assertTrue(is_codex_approval_review(approved))
+        self.assertFalse(is_codex_approval_review(approved_without_thumb))
+        self.assertFalse(is_codex_approval_review(commented_with_thumb))
+        self.assertFalse(is_codex_approval_review(human_approved_with_thumb))
+        approvals = codex_approval_reviews(
+            [approved, approved_without_thumb, commented_with_thumb, human_approved_with_thumb]
+        )
+
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0].author, "codex")
+        self.assertEqual(approvals[0].submitted_at, "2026-06-07T08:00:00Z")
+
+    def test_parse_gh_api_json_flattens_paginated_arrays(self) -> None:
+        raw = (
+            '[{"id":1,"state":"COMMENTED"}]\n'
+            '[{"id":2,"state":"APPROVED"},{"id":3,"state":"APPROVED"}]\n'
+        )
+
+        payload = parse_gh_api_json(raw, paginate=True)
+
+        self.assertEqual([item["id"] for item in payload], [1, 2, 3])
+
+    def test_pr_codex_approvals_uses_paginated_reviews_endpoint(self) -> None:
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str]) -> str:
+            commands.append(command)
+            return (
+                '[{"id":1,"state":"COMMENTED","body":"","user":{"login":"codex"}}]\n'
+                '[{"id":2,"state":"APPROVED","body":"👍","submitted_at":"2026-06-07T08:00:00Z",'
+                '"commit_id":"head-sha","html_url":"https://github.com/acme/web/pull/1#pullrequestreview-2",'
+                '"user":{"login":"codex"}}]\n'
+            )
+
+        with patch("linear_codex_orchestrator.local_github_client._run", fake_run):
+            approvals = asyncio.run(LocalGitHubClient().pr_codex_approvals("acme/web", 1))
+
+        self.assertEqual(commands, [["gh", "api", "--paginate", "repos/acme/web/pulls/1/reviews?per_page=100"]])
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0].commit_id, "head-sha")
+
+    def test_latest_codex_approval_requires_current_head_commit(self) -> None:
+        stale = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="old-sha",
+        )
+        current = PullRequestApproval(
+            key="review:2:2026-06-07T09:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T09:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-2",
+            body="👍",
+            commit_id="head-sha",
+        )
+
+        class FakeGitHub:
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return [stale, current]
+
+        approval = asyncio.run(latest_codex_approval(FakeGitHub(), "acme/web", 12, "head-sha"))
+        missing_head_approval = asyncio.run(latest_codex_approval(FakeGitHub(), "acme/web", 12, ""))
+        stale_only_approval = asyncio.run(latest_codex_approval(FakeGitHub(), "acme/web", 12, "other-sha"))
+
+        self.assertEqual(approval, current)
+        self.assertIsNone(missing_head_approval)
+        self.assertIsNone(stale_only_approval)
+
     def test_pr_feedback_state_round_trips_processed_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.json"
@@ -450,6 +570,7 @@ class CoreTests(unittest.TestCase):
             title="ENG-1: Ship it",
             head_branch="codex/eng-1",
             base_branch="develop",
+            head_sha="abc123",
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "status.json"
@@ -549,6 +670,401 @@ class CoreTests(unittest.TestCase):
 
         self.assertIsNone(issue_identifier)
         self.assertEqual(summary["prs"][0]["key"], "acme/web#12")
+
+    def test_update_issue_codex_approval_preserves_issue_status(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+        )
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="abc123",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                update_issue_status(issue, "PR ready")
+                self.assertTrue(update_issue_codex_approval("ENG-1", pr, approval))
+                self.assertFalse(update_issue_codex_approval("ENG-1", pr, approval))
+                status = read_status()
+
+        issue_status = status["issues"]["ENG-1"]
+        self.assertEqual(issue_status["status"], "PR ready")
+        self.assertTrue(issue_status["codex_approved"])
+        self.assertEqual(issue_status["codex_approved_at"], "2026-06-07T08:00:00Z")
+        self.assertEqual(issue_status["codex_approval_url"], approval.url)
+        self.assertEqual(issue_status["codex_approved_pr"], pr.url)
+
+    def test_clear_issue_codex_approval_only_clears_matching_pr(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+            head_sha="abc123",
+        )
+        approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="abc123",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                self.assertFalse(clear_issue_codex_approval("ENG-1", pr))
+                update_issue_codex_approval("ENG-1", pr, approval)
+                self.assertTrue(clear_issue_codex_approval("ENG-1", pr))
+                status = read_status()
+
+        issue_status = status["issues"]["ENG-1"]
+        self.assertEqual(issue_status["status"], "PR ready")
+        self.assertNotIn("codex_approved", issue_status)
+        self.assertNotIn("codex_approval_url", issue_status)
+
+    def test_process_pr_feedback_maps_codex_approval_to_issue_status(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+            head_sha="abc123",
+        )
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="abc123",
+        )
+
+        class FakeGitHub:
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return [approval]
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return []
+
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            lock_dir = Path(tmp) / "locks"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={}, lock_dir=lock_dir),
+                github=FakeGitHub(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                update_issue_status(issue, "PR ready")
+                update_pr_status(pr, "Ready for review", issue="ENG-1")
+                asyncio.run(orchestrator.process_pr_feedback("web", repo, pr))
+                payload = read_status()
+
+        self.assertTrue(payload["issues"]["ENG-1"]["codex_approved"])
+        self.assertEqual(payload["issues"]["ENG-1"]["codex_approved_pr"], pr.url)
+        self.assertEqual(payload["prs"]["acme/web#12"]["issue"], "ENG-1")
+
+    def test_process_pr_feedback_persists_inferred_issue_for_codex_approval(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+            head_sha="abc123",
+        )
+        approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="abc123",
+        )
+
+        class FakeGitHub:
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return [approval]
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return []
+
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            lock_dir = Path(tmp) / "locks"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={}, lock_dir=lock_dir),
+                github=FakeGitHub(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                asyncio.run(orchestrator.process_pr_feedback("web", repo, pr))
+                payload = read_status()
+
+        self.assertTrue(payload["issues"]["ENG-1"]["codex_approved"])
+        self.assertEqual(payload["prs"]["acme/web#12"]["issue"], "ENG-1")
+
+    def test_process_pr_feedback_keeps_inferred_pending_feedback_issue_visible(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+            head_sha="new-sha",
+        )
+        stale_approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="old-sha",
+        )
+
+        class FakeGitHub:
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return [stale_approval]
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return [
+                    PullRequestFeedback(
+                        key="review-comment:1:2026-06-07T09:00:00Z",
+                        kind="review comment",
+                        author="reviewer",
+                        body="Please update this.",
+                        url="https://github.com/acme/web/pull/12#discussion_r1",
+                    )
+                ]
+
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            lock_dir = Path(tmp) / "locks"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={}, lock_dir=lock_dir, dry_run=True),
+                github=FakeGitHub(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                asyncio.run(orchestrator.process_pr_feedback("web", repo, pr))
+                payload = read_status()
+
+        self.assertEqual(payload["prs"]["acme/web#12"]["issue"], "ENG-1")
+        self.assertEqual(payload["prs"]["acme/web#12"]["status"], "Feedback found")
+        self.assertEqual(payload["issues"]["ENG-1"]["status"], "PR feedback")
+        self.assertEqual(payload["issues"]["ENG-1"]["pr_feedback"], "acme/web#12: Feedback found (1 item)")
+        self.assertNotIn("codex_approved", payload["prs"]["acme/web#12"])
+
+    def test_process_pr_feedback_clears_stale_codex_approval_when_review_is_missing(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+        )
+        approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+        )
+
+        class FakeGitHub:
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return []
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return []
+
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            lock_dir = Path(tmp) / "locks"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={}, lock_dir=lock_dir),
+                github=FakeGitHub(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                update_issue_codex_approval("ENG-1", pr, approval)
+                update_pr_status(pr, "Codex approved", issue="ENG-1", codex_approval=approval)
+                asyncio.run(orchestrator.process_pr_feedback("web", repo, pr))
+                payload = read_status()
+
+        self.assertNotIn("codex_approved", payload["issues"]["ENG-1"])
+        pr_status = payload["prs"]["acme/web#12"]
+        self.assertEqual(pr_status["status"], "No new feedback")
+        self.assertNotIn("codex_approved", pr_status)
+        self.assertEqual(pr_status["issue"], "ENG-1")
+
+    def test_process_pr_feedback_defers_approval_while_feedback_is_pending(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+        )
+        approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+        )
+
+        class FakeGitHub:
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return [approval]
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return [
+                    PullRequestFeedback(
+                        key="review-comment:1:2026-06-07T09:00:00Z",
+                        kind="review comment",
+                        author="reviewer",
+                        body="Please update this.",
+                        url="https://github.com/acme/web/pull/12#discussion_r1",
+                    )
+                ]
+
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            lock_dir = Path(tmp) / "locks"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={}, lock_dir=lock_dir, dry_run=True),
+                github=FakeGitHub(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                update_issue_codex_approval("ENG-1", pr, approval)
+                update_pr_status(pr, "Codex approved", issue="ENG-1", codex_approval=approval)
+                asyncio.run(orchestrator.process_pr_feedback("web", repo, pr))
+                payload = read_status()
+
+        self.assertNotIn("codex_approved", payload["issues"]["ENG-1"])
+        pr_status = payload["prs"]["acme/web#12"]
+        self.assertEqual(pr_status["status"], "Feedback found")
+        self.assertNotIn("codex_approved", pr_status)
+        self.assertEqual(pr_status["issue"], "ENG-1")
+
+    def test_process_pr_feedback_keeps_unmapped_codex_approval_in_pr_status(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="Ship it",
+            head_branch="codex/ship-it",
+            base_branch="develop",
+            head_sha="abc123",
+        )
+        approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="abc123",
+        )
+
+        class FakeGitHub:
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return [approval]
+
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return []
+
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            lock_dir = Path(tmp) / "locks"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={}, lock_dir=lock_dir),
+                github=FakeGitHub(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                asyncio.run(orchestrator.process_pr_feedback("web", repo, pr))
+                payload = read_status()
+
+        pr_status = payload["prs"]["acme/web#12"]
+        self.assertEqual(pr_status["status"], "Codex approved")
+        self.assertTrue(pr_status["codex_approved"])
+        self.assertEqual(pr_status["codex_approved_pr"], pr.url)
+        self.assertNotIn("issue", pr_status)
+
+    def test_issue_identifier_prefers_standard_ticket_pattern(self) -> None:
+        self.assertEqual(parse_issue_identifier("ENG-123: Ship it"), "ENG-123")
+        self.assertEqual(parse_issue_identifier("codex/eng-123-ship-it"), "ENG-123")
+        self.assertIsNone(parse_issue_identifier("no ticket 123"))
 
     def test_orchestrator_enriches_issue_status_progressively(self) -> None:
         issue = parse_linear_issue(

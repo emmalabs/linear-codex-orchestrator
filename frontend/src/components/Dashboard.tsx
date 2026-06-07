@@ -77,8 +77,9 @@ function FeedPanel(props: {
           ...props.data.archivedIssues.map((item) => issueFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail))
         ];
       }
+      const visiblePrs = props.data.prs.filter((item) => !item.issue);
       return [
-        ...props.data.prs.map((item) => prFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail)),
+        ...visiblePrs.map((item) => prFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail)),
         ...props.data.archivedPrs.map((item) => prFeedItem(item, workspaceCatalog, props.onArchive, props.onSelectDetail))
       ];
     },
@@ -212,6 +213,7 @@ type FeedItem = {
   url?: string;
   updatedAt?: string;
   meta: string[];
+  codexApproved: boolean;
   tone: StatusTone;
   workspace: WorkspaceChoice;
   archived: boolean;
@@ -240,6 +242,7 @@ function issueFeedItem(
     url: issue.url,
     updatedAt: issue.updated_at,
     meta,
+    codexApproved: Boolean(issue.codex_approved),
     tone: statusTone(issue.status),
     workspace: workspaceForIssue(issue, workspaceCatalog),
     archived: Boolean(issue.archived),
@@ -269,6 +272,7 @@ function prFeedItem(
     url: pr.url,
     updatedAt: pr.updated_at,
     meta,
+    codexApproved: Boolean(pr.codex_approved),
     tone: statusTone(pr.status),
     workspace: workspaceForPr(pr, workspaceCatalog),
     archived: Boolean(pr.archived),
@@ -412,6 +416,7 @@ function FeedRow({ item }: { item: FeedItem }) {
             <span className={`status-dot status-dot-${item.tone}`} aria-hidden="true" />
             <Text className="feed-row-key" fw={800} size="sm">{item.displayKey}</Text>
             <StatusPill status={item.status} />
+            {item.codexApproved ? <Badge color="green" radius="sm" size="sm" variant="light">👍 Codex approved</Badge> : null}
           </Group>
           <Group className="feed-row-actions" gap={4} wrap="nowrap">
             {timeLabel ? <Text c="dimmed" size="xs" title={item.updatedAt}>{timeLabel}</Text> : null}

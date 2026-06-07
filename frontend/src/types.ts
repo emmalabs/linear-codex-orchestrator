@@ -17,6 +17,10 @@ export type IssueStatus = {
   pr_feedback_updated_at?: string;
   status?: string;
   updated_at?: string;
+  codex_approved?: boolean;
+  codex_approved_at?: string;
+  codex_approval_url?: string;
+  codex_approved_pr?: string;
   archived?: boolean;
   archived_at?: string;
 };
@@ -34,6 +38,10 @@ export type PullRequestStatus = {
   feedback_count?: number;
   status?: string;
   updated_at?: string;
+  codex_approved?: boolean;
+  codex_approved_at?: string;
+  codex_approval_url?: string;
+  codex_approved_pr?: string;
   archived?: boolean;
   archived_at?: string;
 };

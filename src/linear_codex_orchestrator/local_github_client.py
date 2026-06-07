@@ -4,11 +4,13 @@ import json
 import re
 import subprocess
 import tempfile
+from json import JSONDecodeError
 
-from .models import OpenPullRequest, PullRequest, PullRequestFeedback
+from .models import OpenPullRequest, PullRequest, PullRequestApproval, PullRequestFeedback
 
 
 PR_FEEDBACK_COMMENT_MARKER = "<!-- codex-pr-feedback-worker -->"
+CODEX_REVIEW_AUTHOR_LOGINS = {"chatgpt-codex-connector[bot]", "codex"}
 
 
 class LocalGitHubClient:
@@ -90,7 +92,7 @@ class LocalGitHubClient:
                 "--limit",
                 "1000",
                 "--json",
-                "number,url,title,headRefName,baseRefName",
+                "number,url,title,headRefName,headRefOid,baseRefName",
             ]
         )
         prs = json.loads(raw)
@@ -102,6 +104,7 @@ class LocalGitHubClient:
                 title=item["title"],
                 head_branch=item["headRefName"],
                 base_branch=item["baseRefName"],
+                head_sha=item.get("headRefOid") or "",
             )
             for item in prs
             if item.get("headRefName", "").startswith(branch_prefix)
@@ -125,7 +128,7 @@ class LocalGitHubClient:
                 "--limit",
                 "1000",
                 "--json",
-                "number,url,title,headRefName,baseRefName",
+                "number,url,title,headRefName,headRefOid,baseRefName",
             ]
         )
         prs = json.loads(raw)
@@ -137,6 +140,7 @@ class LocalGitHubClient:
                 title=item["title"],
                 head_branch=item["headRefName"],
                 base_branch=item["baseRefName"],
+                head_sha=item.get("headRefOid") or "",
             )
             for item in prs
             if item.get("headRefName", "").startswith(branch_prefix)
@@ -152,6 +156,11 @@ class LocalGitHubClient:
             )
             if feedback.body.strip() and PR_FEEDBACK_COMMENT_MARKER not in feedback.body
         ]
+
+    async def pr_codex_approvals(self, repo: str, number: int) -> list[PullRequestApproval]:
+        return codex_approval_reviews(
+            _gh_api_json(f"repos/{repo}/pulls/{number}/reviews?per_page=100", paginate=True)
+        )
 
     async def comment_on_pr(self, repo: str, number: int, body: str) -> None:
         if self._dry_run:
@@ -236,6 +245,8 @@ class LocalGitHubClient:
         for item in reviews:
             body = item.get("body") or ""
             state = item.get("state") or "REVIEW"
+            if is_codex_approval_review(item):
+                continue
             if not body.strip() and state != "CHANGES_REQUESTED":
                 continue
             feedback.append(
@@ -248,6 +259,36 @@ class LocalGitHubClient:
                 )
             )
         return feedback
+
+
+def is_codex_approval_review(item: dict[str, object]) -> bool:
+    state = str(item.get("state") or "").upper()
+    body = str(item.get("body") or "")
+    user = item.get("user") or {}
+    author = str(user.get("login", "")) if isinstance(user, dict) else ""
+    return state == "APPROVED" and "👍" in body and author in CODEX_REVIEW_AUTHOR_LOGINS
+
+
+def codex_approval_reviews(items: list[dict[str, object]]) -> list[PullRequestApproval]:
+    approvals: list[PullRequestApproval] = []
+    for item in items:
+        if not is_codex_approval_review(item):
+            continue
+        submitted_at = str(item.get("submitted_at") or "")
+        commit_id = str(item.get("commit_id") or "")
+        user = item.get("user") or {}
+        author = str(user.get("login", "unknown")) if isinstance(user, dict) else "unknown"
+        approvals.append(
+            PullRequestApproval(
+                key=f"review:{item['id']}:{submitted_at or commit_id}",
+                author=author,
+                submitted_at=submitted_at,
+                url=str(item.get("html_url") or ""),
+                body=str(item.get("body") or ""),
+                commit_id=str(item.get("commit_id") or ""),
+            )
+        )
+    return approvals
 
 
 def _run(command: list[str]) -> str:
@@ -266,11 +307,42 @@ def pull_request_number_from_url(url: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _gh_api_json(path: str) -> list[dict[str, object]]:
-    raw = _run(["gh", "api", path])
+def _gh_api_json(path: str, *, paginate: bool = False) -> list[dict[str, object]]:
+    command = ["gh", "api"]
+    if paginate:
+        command.append("--paginate")
+    command.append(path)
+    raw = _run(command)
     if not raw:
         return []
-    payload = json.loads(raw)
+    payload = parse_gh_api_json(raw, paginate=paginate)
     if isinstance(payload, list):
         return payload
     return [payload]
+
+
+def parse_gh_api_json(
+    raw: str,
+    *,
+    paginate: bool = False,
+) -> list[dict[str, object]] | dict[str, object]:
+    try:
+        return json.loads(raw)
+    except JSONDecodeError:
+        if not paginate:
+            raise
+
+    decoder = json.JSONDecoder()
+    index = 0
+    items: list[dict[str, object]] = []
+    while index < len(raw):
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        page, index = decoder.raw_decode(raw, index)
+        if isinstance(page, list):
+            items.extend(page)
+        elif isinstance(page, dict):
+            items.append(page)
+    return items

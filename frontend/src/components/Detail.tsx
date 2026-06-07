@@ -99,6 +99,7 @@ export function DetailPage(props: {
               <Group gap="xs" wrap="nowrap">
                 <Text className="detail-key" fw={800}>{key}</Text>
                 <StatusPill status={props.detail.item.status} />
+                {props.detail.item.codex_approved ? <Badge color="green" radius="sm" size="sm" variant="light">👍 Codex approved</Badge> : null}
               </Group>
               <Title className="detail-title" order={1}>{title}</Title>
               <DetailActions
@@ -205,8 +206,8 @@ function DetailActions({ detail, onStatusChange }: {
 
 function statusOptionsFor(detail: SelectedDetail) {
   const base = detail.kind === "issue"
-    ? ["Starting", "Planning", "Implementing", "Reviewing", "PR ready", "Done", "Blocked", "Failed"]
-    : ["Open", "Ready", "No new feedback", "Feedback found", "Fixing feedback", "Merged", "Closed"];
+    ? ["Starting", "Planning", "Implementing", "Reviewing", "PR ready", "Codex approved", "Done", "Blocked", "Failed"]
+    : ["Open", "Ready", "Codex approved", "No new feedback", "Feedback found", "Fixing feedback", "Merged", "Closed"];
   return uniqueValues([detail.item.status, ...base].filter(Boolean) as string[]);
 }
 
@@ -308,6 +309,7 @@ function DetailProperties({ detail, tasks }: { detail: SelectedDetail; tasks: Ta
               </Stack>
             ) : null}
           </DetailTile>
+          <ApprovalDetails item={issue} />
           <Box className="run-metrics">
             <Text fw={800}>Run metrics</Text>
             <SimpleGrid cols={2} spacing="xs">
@@ -334,8 +336,22 @@ function DetailProperties({ detail, tasks }: { detail: SelectedDetail; tasks: Ta
         <DetailTile label="Base" value={pr.base} />
         <DetailTile label="Feedback" value={pr.feedback_count?.toString()} />
         <DetailTile label="Updated" value={pr.updated_at} />
+        <ApprovalDetails item={pr} />
       </Stack>
     </Paper>
+  );
+}
+
+function ApprovalDetails({ item }: { item: IssueStatus | PullRequestStatus }) {
+  if (!item.codex_approved) {
+    return null;
+  }
+  return (
+    <>
+      <DetailTile label="Codex approved" value={item.codex_approved_at} />
+      <DetailTile label="Approval review" value={item.codex_approval_url ? "GitHub review" : undefined} href={item.codex_approval_url} />
+      <DetailTile label="Approved PR" value={item.codex_approved_pr ? prLabel(item.codex_approved_pr) : undefined} href={item.codex_approved_pr} />
+    </>
   );
 }
 
