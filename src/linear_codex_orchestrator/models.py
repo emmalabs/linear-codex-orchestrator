@@ -121,9 +121,11 @@ def mark_linear_orchestrator_comment(body: str) -> str:
 
 
 def has_linear_orchestrator_marker(body: str) -> bool:
-    return (
-        LINEAR_ORCHESTRATOR_HTML_MARKER in body
-        or LINEAR_ORCHESTRATOR_PLAIN_MARKER in body
+    if LINEAR_ORCHESTRATOR_HTML_MARKER in body:
+        return True
+    return any(
+        line.strip() == LINEAR_ORCHESTRATOR_PLAIN_MARKER
+        for line in body.splitlines()
     )
 
 

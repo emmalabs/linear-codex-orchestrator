@@ -182,24 +182,13 @@ class Orchestrator:
         log("Linear feedback check complete")
 
     async def linear_feedback_candidates(self) -> list[LinearIssue]:
-        seen: set[str] = set()
-        candidates: list[LinearIssue] = []
-        in_review = await self.linear.ready_issues(
+        return await self.linear.ready_issues(
             self.settings.in_review_status,
             None,
-            max(self.settings.max_issues_per_tick * 10, 10),
+            self.settings.max_issues_per_tick,
             (self.settings.running_label, self.settings.blocked_label),
             tuple(sorted(self.settings.workspace_map)),
         )
-        for issue in in_review:
-            if issue.id not in seen:
-                candidates.append(issue)
-                seen.add(issue.id)
-        for issue in await self.interrupted_issues():
-            if issue.id not in seen:
-                candidates.append(issue)
-                seen.add(issue.id)
-        return candidates[: self.settings.max_issues_per_tick]
 
     async def archive_merged_prs(self, repo: str, repo_key: str) -> None:
         list_merged_prs = getattr(self.github, "list_merged_prs", None)
@@ -356,15 +345,6 @@ class Orchestrator:
             comments = await self.linear.issue_comments(issue)
             state = linear_feedback_state(self.settings.lock_dir, issue.identifier)
             seen = read_processed_feedback(state)
-            if not state.exists():
-                baseline = {item.key for item in actionable_linear_feedback(comments, set())}
-                write_processed_feedback(state, baseline)
-                log(
-                    f"{issue.identifier}: initialized Linear feedback state "
-                    f"with {len(baseline)} existing comment(s)"
-                )
-                update_issue_linear_feedback_status(issue, "No new Linear feedback", 0)
-                return
             feedback = actionable_linear_feedback(comments, seen)
             if not feedback:
                 log(f"{issue.identifier}: no new Linear feedback")
@@ -376,7 +356,7 @@ class Orchestrator:
                 log(f"[dry-run] Would address Linear feedback on {issue.identifier}")
                 return
             issue_context = await self.linear.issue_context(issue)
-            self.checkout_existing_branch(workspace, branch)
+            self.checkout_existing_branch_from_origin(workspace, branch)
             update_issue_linear_feedback_status(issue, "Fixing Linear feedback", len(feedback))
             summary = await self._fix_linear_feedback(issue, workspace, issue_context, branch, feedback)
             changed_repos = self.uncommitted_changed_repos(workspace)
@@ -396,12 +376,26 @@ class Orchestrator:
                     f"{issue.identifier}: {issue.title}",
                     pr_body,
                 )
+                open_pr = OpenPullRequest(
+                    repo.github,
+                    pr.number,
+                    pr.url,
+                    pr.title,
+                    branch,
+                    repo.base,
+                )
+                if clear_issue_codex_approval(issue.identifier, open_pr):
+                    log(
+                        f"{issue.identifier}: cleared stale Codex approval "
+                        f"for {repo.github}#{pr.number}"
+                    )
                 update_pr_status(
-                    OpenPullRequest(repo.github, pr.number, pr.url, pr.title, branch, repo.base),
+                    open_pr,
                     "Updated for Linear feedback",
                     issue=issue.identifier,
                     repo_key=repo_key,
                     repo_path=repo.path,
+                    clear_codex_approval=True,
                 )
                 prs.append(pr)
             if changed_repos:
@@ -776,6 +770,7 @@ class Orchestrator:
 
         log(f"{issue.identifier}: posting ready-for-review PR links and moving to {self.settings.in_review_status}")
         await self._try_linear_comment(issue, pr_links_comment(prs))
+        await self.seed_linear_feedback_state(issue)
         await self._try_linear_action(
             issue,
             f"move to {self.settings.in_review_status}",
@@ -854,8 +849,33 @@ class Orchestrator:
         if failed:
             raise RuntimeError(f"Cannot resume because branch {branch} could not be checked out in: {', '.join(failed)}")
 
+    def checkout_existing_branch_from_origin(self, workspace: WorkspaceConfig, branch: str) -> None:
+        failed: list[str] = []
+        for repo_key, repo in workspace.repos.items():
+            try:
+                run_git(repo.path, "fetch", "origin", branch)
+                run_git(repo.path, "checkout", "-B", branch, f"origin/{branch}")
+            except Exception:
+                failed.append(repo_key)
+        if failed:
+            raise RuntimeError(
+                f"Cannot refresh branch {branch} from origin in: {', '.join(failed)}"
+            )
+
     def branch_exists_in_all_repos(self, workspace: WorkspaceConfig, branch: str) -> bool:
         return all(branch_exists(repo.path, branch) for repo in workspace.repos.values())
+
+    async def seed_linear_feedback_state(self, issue: LinearIssue) -> None:
+        state = linear_feedback_state(self.settings.lock_dir, issue.identifier)
+        if state.exists():
+            return
+        comments = await self.linear.issue_comments(issue)
+        baseline = {item.key for item in actionable_linear_feedback(comments, set())}
+        write_processed_feedback(state, baseline)
+        log(
+            f"{issue.identifier}: seeded Linear feedback state "
+            f"with {len(baseline)} existing comment(s)"
+        )
 
     async def _plan(self, issue: LinearIssue, workspace: WorkspaceConfig, issue_context: str) -> str:
         log_path = codex_log_path(issue.identifier, "planner")
