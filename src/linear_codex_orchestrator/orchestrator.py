@@ -24,7 +24,14 @@ from .local_github_client import LocalGitHubClient
 from .local_linear_client import LocalLinearClient
 from .linear_api_client import LinearApiClient
 from .locks import lock_for_repo
-from .models import LinearIssue, OpenPullRequest, PullRequest, PullRequestFeedback, ReviewResult
+from .models import (
+    LinearIssue,
+    OpenPullRequest,
+    PullRequest,
+    PullRequestApproval,
+    PullRequestFeedback,
+    ReviewResult,
+)
 from .prompt_templates import render_prompt
 from .run_state import clear_issue_run_state, read_issue_run_state, write_issue_run_state
 
@@ -184,13 +191,37 @@ class Orchestrator:
             if not lock.acquired:
                 log(f"Skipping {repo.github}#{pr.number}: PR feedback lock is already held")
                 return
+            approval = await latest_codex_approval(self.github, repo.github, pr.number)
+            if approval:
+                mapped_issue = issue_identifier_for_pr(pr)
+                if mapped_issue:
+                    changed = update_issue_codex_approval(mapped_issue, pr, approval)
+                    if changed:
+                        log(f"{repo.github}#{pr.number}: marked {mapped_issue} as Codex approved")
+                else:
+                    update_pr_status(
+                        pr,
+                        "Codex approved",
+                        repo_key=repo_key,
+                        repo_path=repo.path,
+                        feedback_count=0,
+                        codex_approval=approval,
+                    )
+                    log(f"{repo.github}#{pr.number}: Codex approved with no linked issue")
             feedback = await self.github.pr_feedback(repo.github, pr.number)
             state = pr_feedback_state(self.settings.lock_dir, repo.github, pr.number)
             seen = read_processed_feedback(state)
             new_feedback = [item for item in feedback if item.key not in seen]
             if not new_feedback:
                 log(f"{repo.github}#{pr.number}: no new PR feedback")
-                update_pr_status(pr, "No new feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=0)
+                if not approval or issue_identifier_for_pr(pr):
+                    update_pr_status(
+                        pr,
+                        "No new feedback",
+                        repo_key=repo_key,
+                        repo_path=repo.path,
+                        feedback_count=0,
+                    )
                 return
             log(f"{repo.github}#{pr.number}: found {len(new_feedback)} new feedback item(s)")
             update_pr_status(pr, "Feedback found", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
@@ -1172,6 +1203,7 @@ def update_pr_status(
     repo_key: str | None = None,
     repo_path: Path | None = None,
     feedback_count: int | None = None,
+    codex_approval: PullRequestApproval | None = None,
 ) -> None:
     payload = read_status()
     prs = payload["prs"]
@@ -1203,8 +1235,81 @@ def update_pr_status(
         current["repo_path"] = str(repo_path)
     if feedback_count is not None:
         current["feedback_count"] = feedback_count
+    if codex_approval:
+        current["codex_approved"] = True
+        current["codex_approved_at"] = (
+            codex_approval.submitted_at or datetime.now().isoformat(timespec="seconds")
+        )
+        current["codex_approval_url"] = codex_approval.url
+        current["codex_approved_pr"] = pr.url
     prs[key] = current
     write_status(payload)
+
+
+def issue_identifier_for_pr(pr: OpenPullRequest) -> str | None:
+    payload = read_status()
+    prs = payload["prs"]
+    assert isinstance(prs, dict)
+    current = prs.get(f"{pr.repo}#{pr.number}", {})
+    if isinstance(current, dict):
+        issue = current.get("issue")
+        if isinstance(issue, str) and issue.strip():
+            return issue.strip().upper()
+    return parse_issue_identifier(pr.title) or parse_issue_identifier(pr.head_branch)
+
+
+def parse_issue_identifier(value: str) -> str | None:
+    match = re.search(r"\b([A-Z][A-Z0-9]+-\d+)\b", value, re.IGNORECASE)
+    return match.group(1).upper() if match else None
+
+
+def update_issue_codex_approval(
+    issue_identifier: str,
+    pr: OpenPullRequest,
+    approval: PullRequestApproval,
+) -> bool:
+    payload = read_status()
+    issues = payload["issues"]
+    assert isinstance(issues, dict)
+    current = issues.get(issue_identifier, {})
+    if not isinstance(current, dict):
+        current = {}
+    approved_at = approval.submitted_at or datetime.now().isoformat(timespec="seconds")
+    next_values = {
+        "identifier": current.get("identifier") or issue_identifier,
+        "title": current.get("title") or issue_identifier,
+        "status": current.get("status") or "Codex approved",
+        "codex_approved": True,
+        "codex_approved_at": approved_at,
+        "codex_approval_url": approval.url,
+        "codex_approved_pr": pr.url,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    changed = any(
+        current.get(key) != value
+        for key, value in next_values.items()
+        if key != "updated_at"
+    )
+    if not changed:
+        return False
+    current.update(next_values)
+    issues[issue_identifier] = current
+    write_status(payload)
+    return True
+
+
+async def latest_codex_approval(
+    github: object,
+    repo: str,
+    number: int,
+) -> PullRequestApproval | None:
+    pr_codex_approvals = getattr(github, "pr_codex_approvals", None)
+    if not callable(pr_codex_approvals):
+        return None
+    approvals = await pr_codex_approvals(repo, number)
+    if not approvals:
+        return None
+    return sorted(approvals, key=lambda item: item.submitted_at or item.key)[-1]
 
 
 async def archive_stale_prs(

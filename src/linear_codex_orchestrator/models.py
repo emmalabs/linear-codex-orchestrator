@@ -54,6 +54,15 @@ class PullRequestFeedback:
 
 
 @dataclass(frozen=True)
+class PullRequestApproval:
+    key: str
+    author: str
+    submitted_at: str
+    url: str
+    body: str
+
+
+@dataclass(frozen=True)
 class ReviewResult:
     passed: bool
     summary: str

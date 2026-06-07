@@ -5,7 +5,7 @@ import re
 import subprocess
 import tempfile
 
-from .models import OpenPullRequest, PullRequest, PullRequestFeedback
+from .models import OpenPullRequest, PullRequest, PullRequestApproval, PullRequestFeedback
 
 
 PR_FEEDBACK_COMMENT_MARKER = "<!-- codex-pr-feedback-worker -->"
@@ -153,6 +153,11 @@ class LocalGitHubClient:
             if feedback.body.strip() and PR_FEEDBACK_COMMENT_MARKER not in feedback.body
         ]
 
+    async def pr_codex_approvals(self, repo: str, number: int) -> list[PullRequestApproval]:
+        return codex_approval_reviews(
+            _gh_api_json(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
+        )
+
     async def comment_on_pr(self, repo: str, number: int, body: str) -> None:
         if self._dry_run:
             print(f"[dry-run] Would comment on {repo}#{number}:\n{body}")
@@ -236,6 +241,8 @@ class LocalGitHubClient:
         for item in reviews:
             body = item.get("body") or ""
             state = item.get("state") or "REVIEW"
+            if is_codex_approval_review(item):
+                continue
             if not body.strip() and state != "CHANGES_REQUESTED":
                 continue
             feedback.append(
@@ -248,6 +255,33 @@ class LocalGitHubClient:
                 )
             )
         return feedback
+
+
+def is_codex_approval_review(item: dict[str, object]) -> bool:
+    state = str(item.get("state") or "").upper()
+    body = str(item.get("body") or "")
+    return state == "APPROVED" and "👍" in body
+
+
+def codex_approval_reviews(items: list[dict[str, object]]) -> list[PullRequestApproval]:
+    approvals: list[PullRequestApproval] = []
+    for item in items:
+        if not is_codex_approval_review(item):
+            continue
+        submitted_at = str(item.get("submitted_at") or "")
+        commit_id = str(item.get("commit_id") or "")
+        user = item.get("user") or {}
+        author = str(user.get("login", "unknown")) if isinstance(user, dict) else "unknown"
+        approvals.append(
+            PullRequestApproval(
+                key=f"review:{item['id']}:{submitted_at or commit_id}",
+                author=author,
+                submitted_at=submitted_at,
+                url=str(item.get("html_url") or ""),
+                body=str(item.get("body") or ""),
+            )
+        )
+    return approvals
 
 
 def _run(command: list[str]) -> str:

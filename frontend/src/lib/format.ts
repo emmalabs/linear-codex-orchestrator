@@ -16,7 +16,7 @@ export function statusTone(status?: string): StatusTone {
   if (/\b(failed|blocked|error|failure|cancelled|canceled|stuck)\b/.test(normalized)) {
     return "error";
   }
-  if (/\b(implemented|ready|passed|done|complete|completed|merged|success|succeeded)\b/.test(normalized)) {
+  if (/\b(implemented|ready|passed|approved|done|complete|completed|merged|success|succeeded)\b/.test(normalized)) {
     return "success";
   }
   if (/\b(implementing|planning|reviewing|fixing|running|active|progress|review|working|queued|started)\b/.test(normalized)) {
