@@ -3,8 +3,21 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from .codex_cli import ISSUES_SCHEMA, MUTATION_SCHEMA, TEAMS_SCHEMA, parse_json_object, run_codex
-from .models import LinearIssue, LinearTeam
+from .codex_cli import (
+    ISSUES_SCHEMA,
+    LINEAR_COMMENTS_SCHEMA,
+    MUTATION_SCHEMA,
+    TEAMS_SCHEMA,
+    parse_json_object,
+    run_codex,
+)
+from .models import (
+    LinearCommentFeedback,
+    LinearIssue,
+    LinearTeam,
+    linear_comment_feedback_key,
+    mark_linear_orchestrator_comment,
+)
 
 
 class LocalLinearClient:
@@ -141,6 +154,42 @@ Do not summarize JSON snippets or dotted paths. Preserve them exactly.
             show_output=False,
         )
 
+    async def issue_comments(self, issue: LinearIssue) -> list[LinearCommentFeedback]:
+        prompt = f"""
+Use the configured Linear MCP tools.
+
+Read comments for Linear issue id "{issue.id}" ({issue.identifier}) only.
+Do not mutate Linear. Do not read local files, skills, or repository code. Use only Linear MCP tools.
+Return only JSON matching the provided schema. For each comment include:
+id, author, body, url, created_at, updated_at.
+Use an empty string for url when Linear does not expose a comment URL.
+If there are no comments, return {{"comments":[]}}.
+""".strip()
+        raw = run_codex(
+            prompt,
+            self._cwd,
+            model=self._model,
+            reasoning_effort=self._reasoning_effort,
+            fast_mode=self._fast_mode,
+            sandbox="read-only",
+            output_schema=LINEAR_COMMENTS_SCHEMA,
+            timeout_seconds=900,
+            show_output=False,
+        )
+        payload = parse_json_object(raw)
+        return [
+            LinearCommentFeedback(
+                key=linear_comment_feedback_key(item["id"], item.get("updated_at") or item.get("created_at") or ""),
+                id=item["id"],
+                author=item.get("author") or "unknown",
+                body=item.get("body") or "",
+                url=item.get("url") or f"{issue.url}#comment-{item['id']}",
+                created_at=item.get("created_at") or "",
+                updated_at=item.get("updated_at") or item.get("created_at") or "",
+            )
+            for item in payload["comments"]
+        ]
+
     async def move_issue(self, issue_id: str, status_name: str) -> None:
         await self._mutate(
             f'Move Linear issue id "{issue_id}" to status exactly "{status_name}".'
@@ -160,7 +209,7 @@ Do not summarize JSON snippets or dotted paths. Preserve them exactly.
 
     async def comment(self, issue_id: str, body: str) -> None:
         await self._mutate(
-            f'Post this comment on Linear issue id "{issue_id}":\n\n{body}'
+            f'Post this comment on Linear issue id "{issue_id}":\n\n{mark_linear_orchestrator_comment(body)}'
         )
 
     async def attach_pr(self, issue_id: str, pr_url: str) -> None:

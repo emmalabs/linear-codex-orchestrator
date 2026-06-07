@@ -25,12 +25,15 @@ from .local_linear_client import LocalLinearClient
 from .linear_api_client import LinearApiClient
 from .locks import lock_for_repo
 from .models import (
+    LinearCommentFeedback,
     LinearIssue,
     OpenPullRequest,
     PullRequest,
     PullRequestApproval,
     PullRequestFeedback,
     ReviewResult,
+    is_orchestrator_linear_comment,
+    mark_linear_orchestrator_comment,
 )
 from .prompt_templates import render_prompt
 from .run_state import clear_issue_run_state, read_issue_run_state, write_issue_run_state
@@ -92,6 +95,7 @@ class Orchestrator:
 
     async def run_once(self) -> None:
         await self.run_pr_feedback_once()
+        await self.run_linear_feedback_once()
         log("Polling Linear for resumable running issues")
         running_issues = await self.linear.ready_issues(
             self.settings.in_progress_status,
@@ -165,6 +169,37 @@ class Orchestrator:
                     except Exception as exc:
                         log(f"{repo.github}#{pr.number}: PR feedback processing failed; daemon will continue: {exc}")
         log("PR feedback check complete")
+
+    async def run_linear_feedback_once(self) -> None:
+        log("Checking Linear issue comments for new feedback")
+        candidates = await self.linear_feedback_candidates()
+        log(f"Found {len(candidates)} Linear issue feedback candidate(s)")
+        for issue in candidates:
+            try:
+                await self.process_linear_feedback(issue)
+            except Exception as exc:
+                log(f"{issue.identifier}: Linear feedback processing failed; daemon will continue: {exc}")
+        log("Linear feedback check complete")
+
+    async def linear_feedback_candidates(self) -> list[LinearIssue]:
+        seen: set[str] = set()
+        candidates: list[LinearIssue] = []
+        in_review = await self.linear.ready_issues(
+            self.settings.in_review_status,
+            None,
+            max(self.settings.max_issues_per_tick * 10, 10),
+            (self.settings.running_label, self.settings.blocked_label),
+            tuple(sorted(self.settings.workspace_map)),
+        )
+        for issue in in_review:
+            if issue.id not in seen:
+                candidates.append(issue)
+                seen.add(issue.id)
+        for issue in await self.interrupted_issues():
+            if issue.id not in seen:
+                candidates.append(issue)
+                seen.add(issue.id)
+        return candidates[: self.settings.max_issues_per_tick]
 
     async def archive_merged_prs(self, repo: str, repo_key: str) -> None:
         list_merged_prs = getattr(self.github, "list_merged_prs", None)
@@ -299,6 +334,74 @@ class Orchestrator:
                     clear_codex_approval=True,
                 )
             write_processed_feedback(state, seen | {item.key for item in new_feedback})
+
+    async def process_linear_feedback(self, issue: LinearIssue) -> None:
+        if self.settings.running_label in issue.labels or self.settings.blocked_label in issue.labels:
+            log(f"Skipping {issue.identifier}: running or blocked label is present")
+            return
+        try:
+            workspace = self.resolve_workspace(issue)
+        except RuntimeError as exc:
+            log(f"Skipping {issue.identifier}: {exc}")
+            return
+        branch = branch_name(issue.identifier, issue.title)
+        if not self.branch_exists_in_all_repos(workspace, branch):
+            log(f"Skipping {issue.identifier}: branch {branch} is not present in all repos")
+            return
+        lock_name = f"linear-feedback:{issue.team_key}:{workspace.path}"
+        with lock_for_repo(self.settings.lock_dir, lock_name) as lock:
+            if not lock.acquired:
+                log(f"Skipping {issue.identifier}: Linear feedback lock is already held")
+                return
+            comments = await self.linear.issue_comments(issue)
+            state = linear_feedback_state(self.settings.lock_dir, issue.identifier)
+            seen = read_processed_feedback(state)
+            feedback = actionable_linear_feedback(comments, seen)
+            if not feedback:
+                log(f"{issue.identifier}: no new Linear feedback")
+                update_issue_linear_feedback_status(issue, "No new Linear feedback", 0)
+                return
+            log(f"{issue.identifier}: found {len(feedback)} new Linear feedback comment(s)")
+            update_issue_linear_feedback_status(issue, "Linear feedback found", len(feedback))
+            if self.settings.dry_run:
+                log(f"[dry-run] Would address Linear feedback on {issue.identifier}")
+                return
+            issue_context = await self.linear.issue_context(issue)
+            self.checkout_existing_branch(workspace, branch)
+            update_issue_linear_feedback_status(issue, "Fixing Linear feedback", len(feedback))
+            summary = await self._fix_linear_feedback(issue, workspace, issue_context, branch, feedback)
+            changed_repos = self.uncommitted_changed_repos(workspace)
+            prs: list[PullRequest] = []
+            for repo_key, repo in changed_repos.items():
+                if has_changes(repo.path):
+                    log(f"{issue.identifier}: committing Linear feedback fixes in {repo_key}")
+                    commit_all(repo.path, f"{issue.identifier}: address Linear feedback")
+                log(f"{issue.identifier}: pushing {repo_key} branch {branch}")
+                push_branch(repo.path, branch)
+                pr_body = linear_feedback_pr_description(issue, repo_key, repo.path, summary)
+                log(f"{issue.identifier}: updating ready-for-review PR for {repo_key}")
+                pr = await self.github.create_or_update_pr(
+                    repo.github,
+                    branch,
+                    repo.base,
+                    f"{issue.identifier}: {issue.title}",
+                    pr_body,
+                )
+                update_pr_status(
+                    OpenPullRequest(repo.github, pr.number, pr.url, pr.title, branch, repo.base),
+                    "Updated for Linear feedback",
+                    issue=issue.identifier,
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                )
+                prs.append(pr)
+            if changed_repos:
+                await self._try_linear_comment(issue, linear_feedback_comment(summary, prs))
+                update_issue_linear_feedback_status(issue, "Linear feedback addressed", len(feedback))
+            else:
+                await self._try_linear_comment(issue, linear_feedback_no_changes_comment(summary))
+                update_issue_linear_feedback_status(issue, "Checked Linear feedback", len(feedback))
+            write_processed_feedback(state, seen | {item.key for item in feedback})
 
     async def process_issue(self, issue: LinearIssue, resume: bool = False) -> None:
         try:
@@ -675,7 +778,11 @@ class Orchestrator:
         update_issue_status(issue, "PR ready", prs=", ".join(pr.url for pr in prs))
 
     async def _try_linear_comment(self, issue: LinearIssue, body: str) -> bool:
-        return await self._try_linear_action(issue, "post Linear comment", self.linear.comment(issue.id, body))
+        return await self._try_linear_action(
+            issue,
+            "post Linear comment",
+            self.linear.comment(issue.id, mark_linear_orchestrator_comment(body)),
+        )
 
     async def _try_linear_action(self, issue: LinearIssue, description: str, action: object) -> bool:
         try:
@@ -705,6 +812,13 @@ class Orchestrator:
             for repo_key, repo in workspace.repos.items()
             if has_changes(repo.path)
         ]
+
+    def uncommitted_changed_repos(self, workspace: WorkspaceConfig) -> dict[str, RepoConfig]:
+        return {
+            repo_key: repo
+            for repo_key, repo in workspace.repos.items()
+            if has_changes(repo.path)
+        }
 
     def commit_phase_changes(
         self,
@@ -850,6 +964,26 @@ class Orchestrator:
         return run_codex(
             pr_feedback_prompt(repo_key, repo, pr, feedback),
             repo.path,
+            model=self.settings.codex_model,
+            reasoning_effort=self.settings.codex_reasoning_effort,
+            fast_mode=self.settings.codex_fast_mode,
+            sandbox=self.settings.codex_sandbox,
+            log_output_path=log_path,
+        )
+
+    async def _fix_linear_feedback(
+        self,
+        issue: LinearIssue,
+        workspace: WorkspaceConfig,
+        issue_context: str,
+        branch: str,
+        feedback: list[LinearCommentFeedback],
+    ) -> str:
+        log_path = codex_log_path(issue.identifier, "linear-feedback")
+        log(f"{issue.identifier}: Linear feedback output: {log_path}")
+        return run_codex(
+            linear_feedback_prompt(issue, workspace, issue_context, branch, feedback),
+            workspace.path,
             model=self.settings.codex_model,
             reasoning_effort=self.settings.codex_reasoning_effort,
             fast_mode=self.settings.codex_fast_mode,
@@ -1014,6 +1148,45 @@ def pr_feedback_prompt(
     )
 
 
+def linear_feedback_prompt(
+    issue: LinearIssue,
+    workspace: WorkspaceConfig,
+    issue_context: str,
+    branch: str,
+    feedback: list[LinearCommentFeedback],
+) -> str:
+    feedback_text = "\n\n".join(linear_feedback_item_text(item) for item in feedback)
+    repos = "\n".join(
+        f"- {repo_key}: {repo.github} at {repo.path} (base {repo.base})"
+        for repo_key, repo in workspace.repos.items()
+    )
+    return render_prompt(
+        "linear_feedback_fix.md",
+        workspace_path=workspace.path,
+        issue_identifier=issue.identifier,
+        issue_title=issue.title,
+        issue_url=issue.url,
+        issue_context=issue_context,
+        branch=branch,
+        repositories=repos,
+        feedback=feedback_text,
+    )
+
+
+def linear_feedback_item_text(item: LinearCommentFeedback) -> str:
+    return f"""
+### Linear comment by {item.author}
+
+Comment ID: `{item.id}`
+Updated: `{item.updated_at}`
+URL: {item.url}
+
+```text
+{item.body.strip()}
+```
+""".strip()
+
+
 def pr_feedback_item_text(item: PullRequestFeedback) -> str:
     path = f"\nPath: `{item.path}`" if item.path else ""
     return f"""
@@ -1023,6 +1196,31 @@ URL: {item.url}{path}
 
 ```text
 {item.body.strip()}
+```
+""".strip()
+
+
+def linear_feedback_pr_description(
+    issue: LinearIssue,
+    repo_key: str,
+    repo_path: Path,
+    summary: str,
+) -> str:
+    try:
+        diffstat = run_git(repo_path, "diff", "--stat", "HEAD~1..HEAD")
+    except Exception:
+        diffstat = "Diffstat unavailable."
+    return f"""
+Linear issue: {issue.url}
+
+Repository: {repo_key}
+
+## Linear Feedback Pass
+{summary}
+
+## Diffstat
+```text
+{diffstat}
 ```
 """.strip()
 
@@ -1156,6 +1354,26 @@ Codex addressed new PR feedback.
 def pr_feedback_no_changes_comment(summary: str) -> str:
     return f"""
 Codex checked the new PR feedback and did not make repository changes.
+
+{truncate_markdown(summary)}
+""".strip()
+
+
+def linear_feedback_comment(summary: str, prs: list[PullRequest]) -> str:
+    links = "\n".join(f"- {pr.url}" for pr in prs)
+    return f"""
+Codex addressed new Linear feedback.
+
+Updated pull requests:
+{links}
+
+{truncate_markdown(summary)}
+""".strip()
+
+
+def linear_feedback_no_changes_comment(summary: str) -> str:
+    return f"""
+Codex checked the new Linear feedback and did not make repository changes.
 
 {truncate_markdown(summary)}
 """.strip()
@@ -1458,6 +1676,35 @@ def update_issue_pr_feedback_status(
     write_status(payload)
 
 
+def update_issue_linear_feedback_status(
+    issue: LinearIssue,
+    status: str,
+    feedback_count: int | None = None,
+) -> None:
+    payload = read_status()
+    issues = payload["issues"]
+    assert isinstance(issues, dict)
+    current = issues.get(issue.identifier, {})
+    if not isinstance(current, dict):
+        current = {
+            "identifier": issue.identifier,
+            "title": issue.title,
+            "url": issue.url,
+            "team": issue.team_key,
+            "project": issue.project_name,
+            "project_url": issue.project_url,
+        }
+    current["linear_feedback"] = linear_feedback_status_text(status, feedback_count)
+    if feedback_count is not None:
+        current["linear_feedback_count"] = feedback_count
+    current["linear_feedback_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    current["updated_at"] = current["linear_feedback_updated_at"]
+    if status != "No new Linear feedback":
+        current["status"] = status
+    issues[issue.identifier] = current
+    write_status(payload)
+
+
 def ensure_issue_pr_feedback_status(issue_identifier: str, pr: OpenPullRequest) -> None:
     payload = read_status()
     issues = payload["issues"]
@@ -1512,6 +1759,11 @@ def pr_feedback_status_text(
 ) -> str:
     suffix = "" if feedback_count is None else f" ({feedback_count} item{'s' if feedback_count != 1 else ''})"
     return f"{pr.repo}#{pr.number}: {status}{suffix}"
+
+
+def linear_feedback_status_text(status: str, feedback_count: int | None = None) -> str:
+    suffix = "" if feedback_count is None else f" ({feedback_count} comment{'s' if feedback_count != 1 else ''})"
+    return f"{status}{suffix}"
 
 
 async def archive_stale_prs(
@@ -1663,6 +1915,24 @@ def codex_log_path(identifier: str, stage: str) -> Path:
 def pr_feedback_state(lock_dir: Path, repo: str, number: int) -> Path:
     safe_repo = repo.replace("/", "__")
     return lock_dir / "pr-feedback-state" / f"{safe_repo}-{number}.json"
+
+
+def linear_feedback_state(lock_dir: Path, issue_identifier: str) -> Path:
+    safe_issue = re.sub(r"[^A-Za-z0-9_.-]+", "-", issue_identifier).strip("-").lower()
+    return lock_dir / "linear-feedback-state" / f"{safe_issue}.json"
+
+
+def actionable_linear_feedback(
+    comments: list[LinearCommentFeedback],
+    processed: set[str],
+) -> list[LinearCommentFeedback]:
+    return [
+        comment
+        for comment in comments
+        if comment.key not in processed
+        and comment.body.strip()
+        and not is_orchestrator_linear_comment(comment.body)
+    ]
 
 
 def linear_client_settings_changed(old: Settings, new: Settings) -> bool:
