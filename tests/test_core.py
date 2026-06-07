@@ -635,6 +635,15 @@ class CoreTests(unittest.TestCase):
             write_processed_feedback(path, {"b", "a"})
             self.assertEqual(read_processed_feedback(path), {"a", "b"})
 
+    def test_processed_feedback_state_ignores_invalid_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text('{"processed": "not-a-list"}', encoding="utf-8")
+            self.assertEqual(read_processed_feedback(path), set())
+
+            path.write_text('{"processed": ["a", 2, "b"]}', encoding="utf-8")
+            self.assertEqual(read_processed_feedback(path), {"a", "b"})
+
     def test_codex_log_path_is_stable_and_sanitized(self) -> None:
         path = codex_log_path("ENG/20", "review fix")
         self.assertEqual(path.parent, Path(".logs"))
@@ -2159,6 +2168,55 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(asyncio.run(LocalLinearClient(Path("/tmp/workspace")).issue_context(issue)), "context")
 
         self.assertIn("Do not read local files", calls[0][0])
+        self.assertFalse(calls[0][1]["show_output"])
+
+    def test_issue_comments_runs_quietly_and_returns_chronological_comments(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Context",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def fake_run_codex(prompt: str, *_args: object, **kwargs: object) -> str:
+            calls.append((prompt, kwargs))
+            return json.dumps(
+                {
+                    "comments": [
+                        {
+                            "id": "late",
+                            "author": "Reviewer",
+                            "body": "Second",
+                            "url": "",
+                            "created_at": "2026-06-07T09:00:00Z",
+                            "updated_at": "2026-06-07T09:00:00Z",
+                        },
+                        {
+                            "id": "early",
+                            "author": "Reviewer",
+                            "body": "First",
+                            "url": "",
+                            "created_at": "2026-06-07T08:00:00Z",
+                            "updated_at": "",
+                        },
+                    ]
+                }
+            )
+
+        with patch("linear_codex_orchestrator.local_linear_client.run_codex", fake_run_codex):
+            comments = asyncio.run(LocalLinearClient(Path("/tmp/workspace")).issue_comments(issue))
+
+        self.assertEqual([comment.id for comment in comments], ["early", "late"])
+        self.assertEqual(comments[0].key, "linear-comment:early:2026-06-07T08:00:00Z")
+        self.assertIn("Do not mutate Linear", calls[0][0])
+        self.assertEqual(calls[0][1]["output_schema"]["required"], ["comments"])
         self.assertFalse(calls[0][1]["show_output"])
 
     def test_process_issue_skips_unmapped_team(self) -> None:

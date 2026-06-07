@@ -1957,7 +1957,12 @@ def read_processed_feedback(path: Path) -> set[str]:
         return set()
     except json.JSONDecodeError:
         return set()
-    return set(payload.get("processed", []))
+    if not isinstance(payload, dict):
+        return set()
+    processed = payload.get("processed", [])
+    if not isinstance(processed, list):
+        return set()
+    return {item for item in processed if isinstance(item, str)}
 
 
 def write_processed_feedback(path: Path, processed: set[str]) -> None:

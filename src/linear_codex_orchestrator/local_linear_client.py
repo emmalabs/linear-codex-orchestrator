@@ -177,7 +177,7 @@ If there are no comments, return {{"comments":[]}}.
             show_output=False,
         )
         payload = parse_json_object(raw)
-        return [
+        comments = [
             LinearCommentFeedback(
                 key=linear_comment_feedback_key(item["id"], item.get("updated_at") or item.get("created_at") or ""),
                 id=item["id"],
@@ -189,6 +189,7 @@ If there are no comments, return {{"comments":[]}}.
             )
             for item in payload["comments"]
         ]
+        return sorted(comments, key=lambda item: item.created_at)
 
     async def move_issue(self, issue_id: str, status_name: str) -> None:
         await self._mutate(
