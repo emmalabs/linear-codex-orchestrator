@@ -321,7 +321,11 @@ def _gh_api_json(path: str, *, paginate: bool = False) -> list[dict[str, object]
     return [payload]
 
 
-def parse_gh_api_json(raw: str, *, paginate: bool = False) -> list[dict[str, object]] | dict[str, object]:
+def parse_gh_api_json(
+    raw: str,
+    *,
+    paginate: bool = False,
+) -> list[dict[str, object]] | dict[str, object]:
     try:
         return json.loads(raw)
     except JSONDecodeError:
