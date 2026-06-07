@@ -218,12 +218,13 @@ function uniqueValues(values: string[]) {
 
 function IssueBrief({ issue }: { issue: IssueStatus }) {
   const plannerBrief = cleanBriefText(issue.planner_brief);
-  const issueContext = cleanBriefText(issue.issue_context);
-  const description = cleanBriefText(issue.description);
-  const prePlanningBrief = issueContext || description;
+  const prePlanningBrief = plannerBrief
+    ? ""
+    : cleanBriefText(issue.issue_context) || cleanBriefText(issue.description);
+  const brief = plannerBrief || prePlanningBrief;
   const statusLabel = issueBriefStatusLabel(issue.context_status, Boolean(plannerBrief));
 
-  if (!plannerBrief && !prePlanningBrief) {
+  if (!brief) {
     return null;
   }
 
@@ -235,7 +236,7 @@ function IssueBrief({ issue }: { issue: IssueStatus }) {
           <Badge color={plannerBrief ? "green" : "cyan"} size="sm" variant="light">{statusLabel}</Badge>
         </Group>
         <Box className="formatted-log-message issue-brief-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{plannerBrief || prePlanningBrief}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{brief}</ReactMarkdown>
         </Box>
       </Stack>
     </Paper>
