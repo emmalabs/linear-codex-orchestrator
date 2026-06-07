@@ -228,6 +228,7 @@ function issueFeedItem(
   const detail: SelectedDetail = { kind: "issue", item: issue };
   const meta = [
     issue.prs ? prMeta(issue.prs) : "",
+    issue.pr_feedback || "",
     issue.changed_repos ? repoMeta(issue.changed_repos) : "",
     issue.project || ""
   ].filter(Boolean);

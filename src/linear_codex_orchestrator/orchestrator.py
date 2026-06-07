@@ -188,19 +188,41 @@ class Orchestrator:
             state = pr_feedback_state(self.settings.lock_dir, repo.github, pr.number)
             seen = read_processed_feedback(state)
             new_feedback = [item for item in feedback if item.key not in seen]
+            issue_identifier = pr_feedback_issue_identifier(pr)
             if not new_feedback:
                 log(f"{repo.github}#{pr.number}: no new PR feedback")
-                update_pr_status(pr, "No new feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=0)
+                update_pr_feedback_status(
+                    pr,
+                    "No new feedback",
+                    issue=issue_identifier,
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=0,
+                )
                 return
             log(f"{repo.github}#{pr.number}: found {len(new_feedback)} new feedback item(s)")
-            update_pr_status(pr, "Feedback found", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+            update_pr_feedback_status(
+                pr,
+                "Feedback found",
+                issue=issue_identifier,
+                repo_key=repo_key,
+                repo_path=repo.path,
+                feedback_count=len(new_feedback),
+            )
             if self.settings.dry_run:
                 log(f"[dry-run] Would address PR feedback on {repo.github}#{pr.number}")
                 return
 
             run_git(repo.path, "fetch", "origin", pr.head_branch)
             run_git(repo.path, "checkout", "-B", pr.head_branch, f"origin/{pr.head_branch}")
-            update_pr_status(pr, "Fixing feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+            update_pr_feedback_status(
+                pr,
+                "Fixing feedback",
+                issue=issue_identifier,
+                repo_key=repo_key,
+                repo_path=repo.path,
+                feedback_count=len(new_feedback),
+            )
             summary = await self._fix_pr_feedback(repo_key, repo, pr, new_feedback)
             if has_changes(repo.path):
                 log(f"{repo.github}#{pr.number}: committing PR feedback fixes")
@@ -208,7 +230,14 @@ class Orchestrator:
                 log(f"{repo.github}#{pr.number}: pushing PR feedback fixes")
                 push_branch(repo.path, pr.head_branch)
                 await self.github.comment_on_pr(repo.github, pr.number, pr_feedback_comment(summary))
-                update_pr_status(pr, "Feedback addressed", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+                update_pr_feedback_status(
+                    pr,
+                    "Feedback addressed",
+                    issue=issue_identifier,
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=len(new_feedback),
+                )
             else:
                 log(f"{repo.github}#{pr.number}: no changes after PR feedback pass")
                 await self.github.comment_on_pr(
@@ -216,7 +245,14 @@ class Orchestrator:
                     pr.number,
                     pr_feedback_no_changes_comment(summary),
                 )
-                update_pr_status(pr, "Checked feedback", repo_key=repo_key, repo_path=repo.path, feedback_count=len(new_feedback))
+                update_pr_feedback_status(
+                    pr,
+                    "Checked feedback",
+                    issue=issue_identifier,
+                    repo_key=repo_key,
+                    repo_path=repo.path,
+                    feedback_count=len(new_feedback),
+                )
             write_processed_feedback(state, seen | {item.key for item in new_feedback})
 
     async def process_issue(self, issue: LinearIssue, resume: bool = False) -> None:
@@ -1227,6 +1263,85 @@ def update_pr_status(
     write_status(payload)
 
 
+def update_pr_feedback_status(
+    pr: OpenPullRequest,
+    status: str,
+    *,
+    issue: str | None = None,
+    repo_key: str | None = None,
+    repo_path: Path | None = None,
+    feedback_count: int | None = None,
+) -> None:
+    update_pr_status(
+        pr,
+        status,
+        issue=issue,
+        repo_key=repo_key,
+        repo_path=repo_path,
+        feedback_count=feedback_count,
+    )
+    if issue:
+        update_issue_pr_feedback_status(issue, pr, status, feedback_count)
+
+
+def update_issue_pr_feedback_status(
+    issue_identifier: str,
+    pr: OpenPullRequest,
+    status: str,
+    feedback_count: int | None = None,
+) -> None:
+    payload = read_status()
+    issues = payload["issues"]
+    assert isinstance(issues, dict)
+    current = issues.get(issue_identifier)
+    if not isinstance(current, dict):
+        return
+    current["prs"] = append_csv_value(str(current.get("prs") or ""), pr.url)
+    current["pr_feedback"] = pr_feedback_status_text(pr, status, feedback_count)
+    current["pr_feedback_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    issues[issue_identifier] = current
+    write_status(payload)
+
+
+def pr_feedback_issue_identifier(pr: OpenPullRequest) -> str | None:
+    payload = read_status()
+    prs = payload["prs"]
+    issues = payload["issues"]
+    assert isinstance(prs, dict)
+    assert isinstance(issues, dict)
+    current = prs.get(f"{pr.repo}#{pr.number}")
+    if isinstance(current, dict):
+        existing = current.get("issue")
+        if isinstance(existing, str) and existing.strip():
+            return existing.strip()
+    inferred = issue_identifier_from_pr(pr)
+    return inferred if inferred in issues else None
+
+
+def issue_identifier_from_pr(pr: OpenPullRequest) -> str | None:
+    for value in (pr.title, pr.head_branch):
+        match = re.search(r"\b([A-Z]+-\d+)\b", value, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    return None
+
+
+def append_csv_value(current: str, value: str) -> str:
+    values = [item.strip() for item in current.split(",") if item.strip()]
+    if value not in values:
+        values.append(value)
+    return ", ".join(values)
+
+
+def pr_feedback_status_text(
+    pr: OpenPullRequest,
+    status: str,
+    feedback_count: int | None = None,
+) -> str:
+    suffix = "" if feedback_count is None else f" ({feedback_count} item{'s' if feedback_count != 1 else ''})"
+    return f"{pr.repo}#{pr.number}: {status}{suffix}"
+
+
 async def archive_stale_prs(
     github: object,
     repo: str,
@@ -1267,6 +1382,7 @@ async def archive_stale_prs(
             }
         )
         archived_prs[key] = current
+    sync_merged_issue_statuses(payload)
     write_status(payload)
 
 
@@ -1297,10 +1413,57 @@ def archive_pr_status(pr: OpenPullRequest) -> bool:
     current = prs.get(key)
     existed = isinstance(current, dict) and not current.get("archived")
     if existed:
-        current["archived"] = True
-        current["archived_at"] = datetime.now().isoformat(timespec="seconds")
+        archived_at = datetime.now().isoformat(timespec="seconds")
+        current.update(
+            {
+                "status": "Merged",
+                "archived": True,
+                "archived_at": archived_at,
+                "updated_at": archived_at,
+            }
+        )
+        sync_merged_issue_statuses(payload)
     write_status(payload)
     return existed
+
+
+def sync_merged_issue_statuses(payload: dict[str, object]) -> None:
+    issues = payload.get("issues", {})
+    prs = payload.get("prs", {})
+    if not isinstance(issues, dict) or not isinstance(prs, dict):
+        return
+    issue_identifiers = sorted(
+        {
+            issue.strip()
+            for value in prs.values()
+            if isinstance(value, dict)
+            for issue in [value.get("issue")]
+            if isinstance(issue, str) and issue.strip()
+        }
+    )
+    now = datetime.now().isoformat(timespec="seconds")
+    for issue_identifier in issue_identifiers:
+        issue = issues.get(issue_identifier)
+        if not isinstance(issue, dict):
+            continue
+        associated_prs = [
+            value
+            for value in prs.values()
+            if isinstance(value, dict) and value.get("issue") == issue_identifier
+        ]
+        if associated_prs and all(is_merged_pr_status(value) for value in associated_prs):
+            issue["status"] = "Done"
+            issue["merged_prs"] = ", ".join(
+                str(value.get("url"))
+                for value in associated_prs
+                if isinstance(value.get("url"), str) and value.get("url")
+            )
+            issue["pr_merged_at"] = now
+            issue["updated_at"] = now
+
+
+def is_merged_pr_status(entry: dict[str, object]) -> bool:
+    return bool(entry.get("archived")) and entry.get("status") == "Merged"
 
 
 def workspace_status_context(workspace: WorkspaceConfig) -> dict[str, object]:

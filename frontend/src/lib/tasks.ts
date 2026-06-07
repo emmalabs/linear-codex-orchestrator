@@ -57,6 +57,12 @@ function issueTaskKeys(issue: IssueStatus) {
   if (issue.identifier) {
     keys.add(issue.identifier.toLowerCase().replace("_", "-"));
   }
+  for (const prUrl of issuePullRequests(issue)) {
+    const key = prTaskKeyFromUrl(prUrl);
+    if (key) {
+      keys.add(key);
+    }
+  }
   return keys;
 }
 
@@ -94,4 +100,9 @@ function prNumber(pr: PullRequestStatus) {
     return fromKey;
   }
   return pr.url?.match(/\/pull\/(\d+)(?:$|[/?#])/)?.[1];
+}
+
+function prTaskKeyFromUrl(url: string) {
+  const match = url.match(/github\.com\/[^/]+\/([^/]+)\/pull\/(\d+)(?:$|[/?#])/);
+  return match ? `${match[1]}-${match[2]}`.toLowerCase() : undefined;
 }

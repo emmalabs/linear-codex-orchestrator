@@ -13,6 +13,8 @@ export type IssueStatus = {
   repos?: Array<{ key: string; github?: string; path?: string; base?: string }> | string;
   changed_repos?: string;
   prs?: string;
+  pr_feedback?: string;
+  pr_feedback_updated_at?: string;
   status?: string;
   updated_at?: string;
   archived?: boolean;
