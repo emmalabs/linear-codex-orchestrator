@@ -338,13 +338,30 @@ function DetailProperties({ detail, tasks }: { detail: SelectedDetail; tasks: Ta
   );
 }
 
-function runMetrics(tasks: TaskLog[]) {
-  const lastModified = Math.max(0, ...tasks.map((task) => task.modified || 0));
+type RunMetrics = {
+  tasks: number;
+  logs: number;
+  filesChanged: number;
+  tokensUsed: number;
+  lastActivity?: string;
+};
+
+function runMetrics(tasks: TaskLog[]): RunMetrics {
+  let logs = 0;
+  let filesChanged = 0;
+  let tokensUsed = 0;
+  let lastModified = 0;
+  for (const task of tasks) {
+    logs += task.log_count || 0;
+    filesChanged += task.file_count || 0;
+    tokensUsed += task.tokens_used || 0;
+    lastModified = Math.max(lastModified, task.modified || 0);
+  }
   return {
     tasks: tasks.length,
-    logs: tasks.reduce((total, task) => total + (task.log_count || 0), 0),
-    filesChanged: tasks.reduce((total, task) => total + (task.file_count || 0), 0),
-    tokensUsed: tasks.reduce((total, task) => total + (task.tokens_used || 0), 0),
+    logs,
+    filesChanged,
+    tokensUsed,
     lastActivity: lastModified ? formatTimestamp(lastModified) : undefined
   };
 }
