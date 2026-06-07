@@ -242,7 +242,7 @@ export function App() {
         navbar={{ width: 248, breakpoint: "sm" }}
         padding="md"
       >
-        <AppShell.Header className="app-header">
+        <AppShell.Header>
           <Group className="app-header-content" h="100%" px="md" wrap="nowrap">
             <Box miw={0}>
               <UnstyledButton className="app-title-link" onClick={() => openSection("issues")}>
