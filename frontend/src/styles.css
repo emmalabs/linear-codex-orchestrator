@@ -94,7 +94,7 @@ body {
 }
 
 .app-navbar {
-  background: color-mix(in srgb, var(--mantine-color-dark-8) 94%, var(--mantine-color-blue-9));
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 88%, var(--mantine-color-dark-8));
   border-right-color: color-mix(in srgb, var(--mantine-color-default-border) 76%, transparent);
 }
 
@@ -103,8 +103,8 @@ body {
 }
 
 .sidebar-status {
-  background: color-mix(in srgb, var(--mantine-color-dark-7) 78%, transparent);
-  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 58%, transparent);
+  background: color-mix(in srgb, var(--mantine-color-dark-6) 72%, var(--mantine-color-dark-7));
+  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 64%, transparent);
   border-radius: 8px;
   padding: 10px;
 }
@@ -114,7 +114,7 @@ body {
 }
 
 .sidebar-status-metric {
-  background: color-mix(in srgb, var(--mantine-color-dark-6) 58%, transparent);
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 72%, transparent);
   border-radius: 6px;
   flex: 1 1 0;
   min-width: 0;
@@ -136,12 +136,12 @@ body {
 }
 
 .nav-item:hover {
-  background: color-mix(in srgb, var(--mantine-color-dark-5) 46%, transparent);
+  background: color-mix(in srgb, var(--mantine-color-dark-5) 58%, var(--mantine-color-dark-7));
 }
 
 .nav-item-active {
-  background: color-mix(in srgb, var(--mantine-color-blue-8) 32%, var(--mantine-color-dark-7));
-  border-color: color-mix(in srgb, var(--mantine-color-blue-5) 48%, transparent);
+  background: color-mix(in srgb, var(--mantine-color-blue-8) 34%, var(--mantine-color-dark-7));
+  border-color: color-mix(in srgb, var(--mantine-color-blue-5) 50%, transparent);
   color: var(--mantine-color-blue-1);
 }
 
@@ -990,6 +990,7 @@ body {
 
   .app-navbar {
     height: auto !important;
+    margin-top: var(--app-shell-header-height, 56px);
     min-height: 0 !important;
     position: static;
   }
