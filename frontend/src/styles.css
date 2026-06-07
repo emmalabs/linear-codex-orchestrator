@@ -492,6 +492,19 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+.feed-workspace-chip {
+  flex: 1 1 auto;
+  max-width: min(220px, 38vw);
+  min-width: 0;
+}
+
+.feed-workspace-chip [class*="mantine-Badge-label"] {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .feed-row-actions {
   flex: 0 0 auto;
 }
