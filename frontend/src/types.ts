@@ -10,6 +10,7 @@ export type IssueStatus = {
   project_url?: string;
   team?: string;
   workspace_path?: string;
+  branch?: string;
   repos?: Array<{ key: string; github?: string; path?: string; base?: string }> | string;
   changed_repos?: string;
   prs?: string;

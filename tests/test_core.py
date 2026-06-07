@@ -1120,14 +1120,18 @@ class CoreTests(unittest.TestCase):
             if call.args and call.args[0] == issue
         ]
         self.assertEqual(update_steps[0][0], "Starting")
+        self.assertEqual(update_steps[0][1]["branch"], branch_name("ENG-1", "Ship it"))
         self.assertEqual(update_steps[0][1]["description"], "Raw Linear description")
         self.assertEqual(update_steps[0][1]["context_status"], "metadata")
         self.assertEqual(update_steps[1][0], "Linear context loaded")
+        self.assertEqual(update_steps[1][1]["branch"], branch_name("ENG-1", "Ship it"))
         self.assertEqual(update_steps[1][1]["issue_context"], "# ENG-1: Ship it\n\nFull Linear context")
         self.assertEqual(update_steps[1][1]["context_status"], "linear_context")
         planned_step = next(step for step in update_steps if step[0] == "Planning complete")
+        self.assertEqual(planned_step[1]["branch"], branch_name("ENG-1", "Ship it"))
         self.assertEqual(planned_step[1]["planner_brief"], "Planner brief")
         self.assertEqual(planned_step[1]["context_status"], "planned")
+        self.assertEqual(status["issues"]["ENG-1"]["branch"], branch_name("ENG-1", "Ship it"))
         self.assertEqual(status["issues"]["ENG-1"]["description"], "Raw Linear description")
         self.assertEqual(status["issues"]["ENG-1"]["issue_context"], "# ENG-1: Ship it\n\nFull Linear context")
         self.assertEqual(status["issues"]["ENG-1"]["planner_brief"], "Planner brief")

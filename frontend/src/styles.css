@@ -818,11 +818,6 @@ body {
   top: 0;
 }
 
-.detail-repositories {
-  border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 44%, transparent);
-  padding-bottom: 14px;
-}
-
 .issue-brief {
   background: color-mix(in srgb, var(--mantine-color-dark-7) 56%, transparent);
   border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 48%, transparent);
@@ -831,22 +826,6 @@ body {
 
 .issue-brief-body {
   max-height: 420px;
-}
-
-.issue-source-context {
-  max-height: 360px;
-}
-
-.source-context-accordion [class*="mantine-Accordion-item"] {
-  background: color-mix(in srgb, var(--mantine-color-dark-8) 72%, transparent);
-  border-color: color-mix(in srgb, var(--mantine-color-default-border) 54%, transparent);
-  border-radius: 6px;
-}
-
-.source-context-accordion [class*="mantine-Accordion-control"] {
-  color: var(--mantine-color-dimmed);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .detail-tile {
