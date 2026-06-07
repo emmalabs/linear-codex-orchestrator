@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import tempfile
+from json import JSONDecodeError
 
 from .models import OpenPullRequest, PullRequest, PullRequestApproval, PullRequestFeedback
 
@@ -314,7 +315,30 @@ def _gh_api_json(path: str, *, paginate: bool = False) -> list[dict[str, object]
     raw = _run(command)
     if not raw:
         return []
-    payload = json.loads(raw)
+    payload = parse_gh_api_json(raw, paginate=paginate)
     if isinstance(payload, list):
         return payload
     return [payload]
+
+
+def parse_gh_api_json(raw: str, *, paginate: bool = False) -> list[dict[str, object]] | dict[str, object]:
+    try:
+        return json.loads(raw)
+    except JSONDecodeError:
+        if not paginate:
+            raise
+
+    decoder = json.JSONDecoder()
+    index = 0
+    items: list[dict[str, object]] = []
+    while index < len(raw):
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        page, index = decoder.raw_decode(raw, index)
+        if isinstance(page, list):
+            items.extend(page)
+        elif isinstance(page, dict):
+            items.append(page)
+    return items

@@ -237,6 +237,9 @@ class Orchestrator:
                     )
                 return
             log(f"{repo.github}#{pr.number}: found {len(new_feedback)} new feedback item(s)")
+            issue_identifier = issue_identifier or mapped_issue
+            if issue_identifier:
+                ensure_issue_pr_feedback_status(issue_identifier, pr)
             if mapped_issue and clear_issue_codex_approval(mapped_issue, pr):
                 log(f"{repo.github}#{pr.number}: cleared Codex approval for {mapped_issue} while handling feedback")
             update_pr_feedback_status(
@@ -1402,9 +1405,10 @@ async def latest_codex_approval(
     pr_codex_approvals = getattr(github, "pr_codex_approvals", None)
     if not callable(pr_codex_approvals):
         return None
+    if not head_sha:
+        return None
     approvals = await pr_codex_approvals(repo, number)
-    if head_sha:
-        approvals = [approval for approval in approvals if approval.commit_id == head_sha]
+    approvals = [approval for approval in approvals if approval.commit_id == head_sha]
     if not approvals:
         return None
     return max(approvals, key=lambda item: item.submitted_at or item.key)
@@ -1451,6 +1455,23 @@ def update_issue_pr_feedback_status(
     current["pr_feedback"] = pr_feedback_status_text(pr, status, feedback_count)
     current["pr_feedback_updated_at"] = datetime.now().isoformat(timespec="seconds")
     issues[issue_identifier] = current
+    write_status(payload)
+
+
+def ensure_issue_pr_feedback_status(issue_identifier: str, pr: OpenPullRequest) -> None:
+    payload = read_status()
+    issues = payload["issues"]
+    assert isinstance(issues, dict)
+    current = issues.get(issue_identifier)
+    if isinstance(current, dict):
+        return
+    issues[issue_identifier] = {
+        "identifier": issue_identifier,
+        "title": issue_identifier,
+        "status": "PR feedback",
+        "prs": pr.url,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
     write_status(payload)
 
 
