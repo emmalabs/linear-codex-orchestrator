@@ -5,7 +5,7 @@ body,
 }
 
 body {
-  background: var(--mantine-color-body);
+  background: #101315;
   overflow: hidden;
 }
 
@@ -61,6 +61,11 @@ body {
   min-height: 0;
 }
 
+.app-header {
+  background: #151a1d;
+  border-bottom-color: color-mix(in srgb, var(--mantine-color-teal-6) 34%, transparent);
+}
+
 .app-header-content {
   justify-content: space-between;
 }
@@ -79,7 +84,7 @@ body {
 
 .app-title-link:hover .app-title,
 .app-title-link:focus-visible .app-title {
-  color: var(--mantine-color-blue-2);
+  color: var(--mantine-color-teal-2);
 }
 
 .status-group {
@@ -95,11 +100,11 @@ body {
 
 .app-navbar,
 .feed-panel {
-  background: color-mix(in srgb, var(--mantine-color-dark-7) 88%, var(--mantine-color-dark-8));
+  background: #171b1f;
 }
 
 .app-navbar {
-  border-right-color: color-mix(in srgb, var(--mantine-color-default-border) 76%, transparent);
+  border-right-color: color-mix(in srgb, var(--mantine-color-teal-7) 30%, var(--mantine-color-default-border));
 }
 
 .navbar-content {
@@ -108,8 +113,8 @@ body {
 
 .sidebar-status,
 .feed-row {
-  background: color-mix(in srgb, var(--mantine-color-dark-6) 72%, var(--mantine-color-dark-7));
-  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 64%, transparent);
+  background: #1e2427;
+  border: 1px solid color-mix(in srgb, var(--mantine-color-teal-8) 18%, var(--mantine-color-default-border));
   border-radius: 8px;
 }
 
@@ -122,7 +127,7 @@ body {
 }
 
 .sidebar-status-metric {
-  background: color-mix(in srgb, var(--mantine-color-dark-7) 72%, transparent);
+  background: #151a1d;
   border-radius: 6px;
   flex: 1 1 0;
   min-width: 0;
@@ -145,13 +150,13 @@ body {
 
 .nav-item:hover,
 .feed-row:hover {
-  background: color-mix(in srgb, var(--mantine-color-dark-5) 58%, var(--mantine-color-dark-7));
+  background: #263034;
 }
 
 .nav-item-active {
-  background: color-mix(in srgb, var(--mantine-color-blue-8) 34%, var(--mantine-color-dark-7));
-  border-color: color-mix(in srgb, var(--mantine-color-blue-5) 50%, transparent);
-  color: var(--mantine-color-blue-1);
+  background: color-mix(in srgb, var(--mantine-color-teal-8) 38%, #1a2023);
+  border-color: color-mix(in srgb, var(--mantine-color-teal-4) 62%, transparent);
+  color: var(--mantine-color-teal-1);
 }
 
 .setup-stack {
@@ -368,7 +373,7 @@ body {
 }
 
 .feed-kicker {
-  color: var(--mantine-color-blue-3);
+  color: var(--mantine-color-teal-3);
   letter-spacing: 0;
 }
 
@@ -409,9 +414,9 @@ body {
 }
 
 .feed-filter-active {
-  background: color-mix(in srgb, var(--mantine-color-blue-8) 34%, var(--mantine-color-dark-7));
-  border-color: color-mix(in srgb, var(--mantine-color-blue-5) 50%, transparent);
-  color: var(--mantine-color-blue-1);
+  background: color-mix(in srgb, var(--mantine-color-teal-8) 38%, #1a2023);
+  border-color: color-mix(in srgb, var(--mantine-color-teal-4) 62%, transparent);
+  color: var(--mantine-color-teal-1);
 }
 
 .feed-filter-count {
@@ -461,7 +466,7 @@ body {
 }
 
 .feed-row:hover {
-  border-color: color-mix(in srgb, var(--mantine-color-blue-5) 30%, var(--mantine-color-default-border));
+  border-color: color-mix(in srgb, var(--mantine-color-teal-4) 42%, var(--mantine-color-default-border));
 }
 
 .feed-row-accent {
@@ -478,7 +483,7 @@ body {
 }
 
 .feed-row-accent-active {
-  background: var(--mantine-color-blue-5);
+  background: var(--mantine-color-teal-5);
 }
 
 .feed-row-accent-neutral {
@@ -492,7 +497,7 @@ body {
 }
 
 .feed-row-key {
-  color: var(--mantine-color-blue-2);
+  color: var(--mantine-color-cyan-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 

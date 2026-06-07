@@ -99,7 +99,7 @@ The default config runs for real with `DRY_RUN=false`, so the daemon can update 
 DRY_RUN=true ./scripts/run.sh
 ```
 
-Daemon mode also starts the React dashboard at `http://127.0.0.1:8765` so you can follow orchestration logs, issue/PR status, and inspect detailed Codex stage logs. `./scripts/setup.sh` builds the dashboard, and `./scripts/run.sh` builds it automatically if `frontend/dist/` is missing.
+Daemon mode also starts the React dashboard at `http://127.0.0.1:8765` so you can follow orchestration logs, issue/PR status, and inspect detailed Codex stage logs. `./scripts/setup.sh` builds the dashboard, and `./scripts/run.sh` builds it automatically if `frontend/dist/` is missing or stale.
 
 For code hot reload while developing the orchestrator, run:
 
