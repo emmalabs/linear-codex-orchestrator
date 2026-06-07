@@ -192,8 +192,8 @@ class Orchestrator:
                 log(f"Skipping {repo.github}#{pr.number}: PR feedback lock is already held")
                 return
             approval = await latest_codex_approval(self.github, repo.github, pr.number)
+            mapped_issue = issue_identifier_for_pr(pr) if approval else None
             if approval:
-                mapped_issue = issue_identifier_for_pr(pr)
                 if mapped_issue:
                     changed = update_issue_codex_approval(mapped_issue, pr, approval)
                     if changed:
@@ -214,7 +214,7 @@ class Orchestrator:
             new_feedback = [item for item in feedback if item.key not in seen]
             if not new_feedback:
                 log(f"{repo.github}#{pr.number}: no new PR feedback")
-                if not approval or issue_identifier_for_pr(pr):
+                if not approval or mapped_issue:
                     update_pr_status(
                         pr,
                         "No new feedback",
@@ -1309,7 +1309,7 @@ async def latest_codex_approval(
     approvals = await pr_codex_approvals(repo, number)
     if not approvals:
         return None
-    return sorted(approvals, key=lambda item: item.submitted_at or item.key)[-1]
+    return max(approvals, key=lambda item: item.submitted_at or item.key)
 
 
 async def archive_stale_prs(
