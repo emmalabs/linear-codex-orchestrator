@@ -335,8 +335,8 @@ class Orchestrator:
             log(f"Skipping {issue.identifier}: {exc}")
             return
         branch = branch_name(issue.identifier, issue.title)
-        if not self.branch_exists_in_all_repos(workspace, branch):
-            log(f"Skipping {issue.identifier}: branch {branch} is not present in all repos")
+        if not self.branch_available_in_all_repos(workspace, branch):
+            log(f"Skipping {issue.identifier}: branch {branch} is not available in all repos")
             return
         lock_name = f"{issue.team_key}:{workspace.path}"
         with lock_for_repo(self.settings.lock_dir, lock_name) as lock:
@@ -355,6 +355,12 @@ class Orchestrator:
             update_issue_linear_feedback_status(issue, "Linear feedback found", len(feedback))
             if self.settings.dry_run:
                 log(f"[dry-run] Would address Linear feedback on {issue.identifier}")
+                return
+            dirty_repos = self.dirty_workspace_repos(workspace)
+            if dirty_repos:
+                joined = ", ".join(dirty_repos)
+                log(f"Skipping {issue.identifier}: workspace has uncommitted changes in: {joined}")
+                update_issue_linear_feedback_status(issue, "Workspace dirty", len(feedback))
                 return
             issue_context = await self.linear.issue_context(issue)
             self.checkout_existing_branch_from_origin(workspace, branch)
@@ -870,6 +876,12 @@ class Orchestrator:
 
     def branch_exists_in_all_repos(self, workspace: WorkspaceConfig, branch: str) -> bool:
         return all(branch_exists(repo.path, branch) for repo in workspace.repos.values())
+
+    def branch_available_in_all_repos(self, workspace: WorkspaceConfig, branch: str) -> bool:
+        return all(
+            branch_exists(repo.path, branch) or remote_branch_exists(repo.path, branch)
+            for repo in workspace.repos.values()
+        )
 
     async def seed_linear_feedback_state(self, issue: LinearIssue) -> None:
         state = linear_feedback_state(self.settings.lock_dir, issue.identifier)

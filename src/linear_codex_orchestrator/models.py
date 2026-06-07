@@ -67,16 +67,19 @@ class LinearCommentFeedback:
 
 LINEAR_ORCHESTRATOR_HTML_MARKER = "<!-- linear-codex-orchestrator -->"
 LINEAR_ORCHESTRATOR_PLAIN_MARKER = "linear-codex-orchestrator"
-LINEAR_ORCHESTRATOR_STATUS_PREFIXES = (
-    "Codex started work",
-    "Codex plan:",
-    "Codex implementation finished",
-    "Codex optimization pass finished",
-    "Codex reviewer",
-    "Codex addressed",
-    "PRs ready for review",
-    "Planner blocked",
-    "Codex orchestration failed",
+LINEAR_ORCHESTRATOR_LEGACY_STATUS_SHAPES = (
+    "Codex started work on `",
+    "Codex plan:\n",
+    "Codex implementation finished.",
+    "Codex optimization pass finished.",
+    "Codex reviewer approved automatic PR creation.",
+    "Codex reviewer did not approve an automatic PR yet.",
+    "Codex addressed reviewer findings.",
+    "Codex addressed new PR feedback.",
+    "Codex addressed new Linear feedback.",
+    "PRs ready for review:\n",
+    "Planner blocked automatic implementation.",
+    "Codex orchestration failed:\n",
 )
 
 
@@ -135,10 +138,9 @@ def is_orchestrator_linear_comment(body: str) -> bool:
         return True
     if has_linear_orchestrator_marker(stripped):
         return True
-    normalized = stripped.lower()
     return any(
-        normalized.startswith(prefix.lower())
-        for prefix in LINEAR_ORCHESTRATOR_STATUS_PREFIXES
+        stripped.startswith(status_shape)
+        for status_shape in LINEAR_ORCHESTRATOR_LEGACY_STATUS_SHAPES
     )
 
 
