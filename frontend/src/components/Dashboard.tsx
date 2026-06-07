@@ -27,6 +27,7 @@ type FeedFilter = "All" | StatusGroup | "Archived";
 const allWorkspaces = "__all__";
 const filterOrder: FeedFilter[] = ["All", "Active", "Needs attention", "Ready", "Done", "Archived"];
 const groupOrder: StatusGroup[] = ["Active", "Needs attention", "Ready", "Done"];
+const logFollowThresholdPx = 24;
 
 export function DashboardView(props: {
   data: DashboardData;
@@ -229,6 +230,7 @@ function issueFeedItem(
   const detail: SelectedDetail = { kind: "issue", item: issue };
   const meta = [
     issue.prs ? prMeta(issue.prs) : "",
+    issue.pr_feedback || "",
     issue.changed_repos ? repoMeta(issue.changed_repos) : "",
     issue.project || ""
   ].filter(Boolean);
@@ -491,6 +493,8 @@ function RightRail(props: {
   shouldFollowRef: React.MutableRefObject<boolean>;
 }) {
   const step = currentStep(props.data.orchestration);
+  const logLines = React.useMemo(() => props.data.orchestration.split("\n"), [props.data.orchestration]);
+  const logLineCount = React.useMemo(() => logLines.filter(Boolean).length, [logLines]);
   return (
     <Stack className="right-rail" gap="md">
       <LiveActivityPanel currentStepLabel={step.label} tasks={props.data.tasks} />
@@ -498,7 +502,7 @@ function RightRail(props: {
       <Paper withBorder className="rail-panel log-panel" p="md">
         <Group justify="space-between" mb="sm">
           <Text fw={800}>Orchestration Log</Text>
-          <Text c="dimmed" size="xs">{props.data.orchestration.split("\n").filter(Boolean).length} lines</Text>
+          <Text c="dimmed" size="xs">{logLineCount} lines</Text>
         </Group>
         <div
           ref={props.orchestrationRef}
@@ -506,23 +510,23 @@ function RightRail(props: {
           onScroll={(event) => {
             const element = event.currentTarget;
             const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-            props.shouldFollowRef.current = distanceFromBottom < 24;
+            props.shouldFollowRef.current = distanceFromBottom < logFollowThresholdPx;
           }}
         >
-          <OrchestrationLog text={props.data.orchestration} />
+          <OrchestrationLog hasText={Boolean(props.data.orchestration)} lines={logLines} />
         </div>
       </Paper>
     </Stack>
   );
 }
 
-function OrchestrationLog({ text }: { text: string }) {
-  if (!text) {
+function OrchestrationLog({ hasText, lines }: { hasText: boolean; lines: string[] }) {
+  if (!hasText) {
     return <div className="log-line log-line-muted">No orchestration log yet.</div>;
   }
   return (
     <>
-      {text.split("\n").map((line, index) => (
+      {lines.map((line, index) => (
         <LogLine key={`${index}-${line}`} line={line} />
       ))}
     </>

@@ -91,7 +91,7 @@ class LocalGitHubClient:
                 "--limit",
                 "1000",
                 "--json",
-                "number,url,title,headRefName,baseRefName",
+                "number,url,title,headRefName,headRefOid,baseRefName",
             ]
         )
         prs = json.loads(raw)
@@ -103,6 +103,7 @@ class LocalGitHubClient:
                 title=item["title"],
                 head_branch=item["headRefName"],
                 base_branch=item["baseRefName"],
+                head_sha=item.get("headRefOid") or "",
             )
             for item in prs
             if item.get("headRefName", "").startswith(branch_prefix)
@@ -126,7 +127,7 @@ class LocalGitHubClient:
                 "--limit",
                 "1000",
                 "--json",
-                "number,url,title,headRefName,baseRefName",
+                "number,url,title,headRefName,headRefOid,baseRefName",
             ]
         )
         prs = json.loads(raw)
@@ -138,6 +139,7 @@ class LocalGitHubClient:
                 title=item["title"],
                 head_branch=item["headRefName"],
                 base_branch=item["baseRefName"],
+                head_sha=item.get("headRefOid") or "",
             )
             for item in prs
             if item.get("headRefName", "").startswith(branch_prefix)
@@ -156,7 +158,7 @@ class LocalGitHubClient:
 
     async def pr_codex_approvals(self, repo: str, number: int) -> list[PullRequestApproval]:
         return codex_approval_reviews(
-            _gh_api_json(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
+            _gh_api_json(f"repos/{repo}/pulls/{number}/reviews?per_page=100", paginate=True)
         )
 
     async def comment_on_pr(self, repo: str, number: int, body: str) -> None:
@@ -282,6 +284,7 @@ def codex_approval_reviews(items: list[dict[str, object]]) -> list[PullRequestAp
                 submitted_at=submitted_at,
                 url=str(item.get("html_url") or ""),
                 body=str(item.get("body") or ""),
+                commit_id=str(item.get("commit_id") or ""),
             )
         )
     return approvals
@@ -303,8 +306,12 @@ def pull_request_number_from_url(url: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _gh_api_json(path: str) -> list[dict[str, object]]:
-    raw = _run(["gh", "api", path])
+def _gh_api_json(path: str, *, paginate: bool = False) -> list[dict[str, object]]:
+    command = ["gh", "api"]
+    if paginate:
+        command.append("--paginate")
+    command.append(path)
+    raw = _run(command)
     if not raw:
         return []
     payload = json.loads(raw)

@@ -1,6 +1,10 @@
 export type IssueStatus = {
   identifier?: string;
   title?: string;
+  description?: string;
+  issue_context?: string;
+  planner_brief?: string;
+  context_status?: "metadata" | "linear_context" | "planned" | string;
   url?: string;
   project?: string;
   project_url?: string;
@@ -9,6 +13,8 @@ export type IssueStatus = {
   repos?: Array<{ key: string; github?: string; path?: string; base?: string }> | string;
   changed_repos?: string;
   prs?: string;
+  pr_feedback?: string;
+  pr_feedback_updated_at?: string;
   status?: string;
   updated_at?: string;
   codex_approved?: boolean;

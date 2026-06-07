@@ -43,6 +43,7 @@ from linear_codex_orchestrator.orchestrator import (
     planner_block_reason,
     planner_blocked_comment,
     planner_is_blocked,
+    pr_feedback_issue_identifier,
     pr_feedback_prompt,
     parse_issue_identifier,
     read_processed_feedback,
@@ -52,6 +53,7 @@ from linear_codex_orchestrator.orchestrator import (
     truncate_text,
     update_issue_codex_approval,
     update_issue_status,
+    update_pr_feedback_status,
     update_pr_status,
     workspace_status_context,
     write_processed_feedback,
@@ -528,6 +530,80 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(status["prs"]["acme/web#12"]["repo_path"], "/tmp/workspace/web")
         self.assertEqual(status["archived_prs"], {})
 
+    def test_pr_feedback_status_is_associated_with_existing_issue(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1-ship-it",
+            base_branch="develop",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            path = tmp_path / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                    update_issue_status(issue, "PR ready")
+                    issue_identifier = pr_feedback_issue_identifier(pr)
+                    update_pr_feedback_status(
+                        pr,
+                        "Feedback addressed",
+                        issue=issue_identifier,
+                        repo_key="web",
+                        repo_path=Path("/tmp/workspace/web"),
+                        feedback_count=2,
+                    )
+                    status = read_status()
+                    summary = status_index()
+
+        self.assertEqual(issue_identifier, "ENG-1")
+        self.assertEqual(status["prs"]["acme/web#12"]["issue"], "ENG-1")
+        self.assertEqual(status["issues"]["ENG-1"]["prs"], "https://github.com/acme/web/pull/12")
+        self.assertEqual(status["issues"]["ENG-1"]["pr_feedback"], "acme/web#12: Feedback addressed (2 items)")
+        self.assertEqual(summary["prs"], [])
+        self.assertEqual(summary["issues"][0]["pr_feedback"], "acme/web#12: Feedback addressed (2 items)")
+
+    def test_pr_feedback_status_without_existing_issue_stays_orphaned(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1-ship-it",
+            base_branch="develop",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            path = tmp_path / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                    issue_identifier = pr_feedback_issue_identifier(pr)
+                    update_pr_feedback_status(
+                        pr,
+                        "Feedback found",
+                        issue=issue_identifier,
+                        repo_key="web",
+                        repo_path=Path("/tmp/workspace/web"),
+                        feedback_count=1,
+                    )
+                    summary = status_index()
+
+        self.assertIsNone(issue_identifier)
+        self.assertEqual(summary["prs"][0]["key"], "acme/web#12")
+
     def test_update_issue_codex_approval_preserves_issue_status(self) -> None:
         pr = OpenPullRequest(
             repo="acme/web",
@@ -858,6 +934,73 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parse_issue_identifier("codex/eng-123-ship-it"), "ENG-123")
         self.assertIsNone(parse_issue_identifier("no ticket 123"))
 
+    def test_orchestrator_enriches_issue_status_progressively(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "Raw Linear description",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "Todo"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+
+        class FakeLinear:
+            async def issue_context(self, _issue: object) -> str:
+                return "# ENG-1: Ship it\n\nFull Linear context"
+
+            async def comment(self, _issue_id: str, _body: str) -> None:
+                return None
+
+            async def remove_label(self, _issue_id: str, _label: str) -> None:
+                return None
+
+        class TestOrchestrator(Orchestrator):
+            def dirty_workspace_repos(self, _workspace: WorkspaceConfig) -> list[str]:
+                return []
+
+            async def _plan(self, _issue: object, _workspace: object, _issue_context: str) -> str:
+                return "Planner brief"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workspace = WorkspaceConfig(
+                path=tmp_path,
+                repos={"web": RepoConfig("acme/web", tmp_path / "web", "main")},
+            )
+            settings = Settings(workspace_map={"ENG": workspace}, lock_dir=tmp_path / "locks")
+            status_file = tmp_path / "status.json"
+            orchestrator = TestOrchestrator(settings, linear=FakeLinear(), github=object())
+
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status_file):
+                with patch("linear_codex_orchestrator.orchestrator.ensure_branch", side_effect=RuntimeError("stop after plan")):
+                    with patch("linear_codex_orchestrator.orchestrator.update_issue_status", wraps=update_issue_status) as updates:
+                        with self.assertRaisesRegex(RuntimeError, "stop after plan"):
+                            asyncio.run(orchestrator._process_locked_issue(issue, workspace, resume=False))
+                        status = read_status()
+
+        update_steps = [
+            (call.args[1], call.kwargs)
+            for call in updates.call_args_list
+            if call.args and call.args[0] == issue
+        ]
+        self.assertEqual(update_steps[0][0], "Starting")
+        self.assertEqual(update_steps[0][1]["description"], "Raw Linear description")
+        self.assertEqual(update_steps[0][1]["context_status"], "metadata")
+        self.assertEqual(update_steps[1][0], "Linear context loaded")
+        self.assertEqual(update_steps[1][1]["issue_context"], "# ENG-1: Ship it\n\nFull Linear context")
+        self.assertEqual(update_steps[1][1]["context_status"], "linear_context")
+        planned_step = next(step for step in update_steps if step[0] == "Planning complete")
+        self.assertEqual(planned_step[1]["planner_brief"], "Planner brief")
+        self.assertEqual(planned_step[1]["context_status"], "planned")
+        self.assertEqual(status["issues"]["ENG-1"]["description"], "Raw Linear description")
+        self.assertEqual(status["issues"]["ENG-1"]["issue_context"], "# ENG-1: Ship it\n\nFull Linear context")
+        self.assertEqual(status["issues"]["ENG-1"]["planner_brief"], "Planner brief")
+        self.assertEqual(status["issues"]["ENG-1"]["context_status"], "planned")
+
     def test_archive_stale_prs_moves_only_missing_prs_for_repo(self) -> None:
         class FakeGitHub:
             async def pr_archive_status(self, _repo: str, number: int) -> str:
@@ -868,11 +1011,21 @@ class CoreTests(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     {
+                        "issues": {
+                            "ENG-1": {
+                                "identifier": "ENG-1",
+                                "status": "PR ready",
+                                "prs": "https://github.com/acme/web/pull/12",
+                                "updated_at": "2026-01-01T00:00:00",
+                            }
+                        },
                         "prs": {
                             "acme/web#12": {
                                 "key": "acme/web#12",
                                 "repo": "acme/web",
                                 "number": 12,
+                                "url": "https://github.com/acme/web/pull/12",
+                                "issue": "ENG-1",
                                 "status": "Ready",
                                 "updated_at": "2026-01-01T00:00:00",
                             },
@@ -912,6 +1065,8 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(status["prs"]["acme/web#12"]["archived"])
         self.assertEqual(status["archived_prs"]["acme/web#12"]["status"], "Merged")
         self.assertIn("archived_at", status["archived_prs"]["acme/web#12"])
+        self.assertEqual(status["issues"]["ENG-1"]["status"], "Done")
+        self.assertEqual(status["issues"]["ENG-1"]["merged_prs"], "https://github.com/acme/web/pull/12")
 
     def test_archive_stale_prs_preserves_other_repos(self) -> None:
         class FakeGitHub:
@@ -988,7 +1143,95 @@ class CoreTests(unittest.TestCase):
                 self.assertFalse(archive_pr_status(pr))
                 status = read_status()
         self.assertTrue(status["prs"]["acme/web#12"]["archived"])
+        self.assertEqual(status["prs"]["acme/web#12"]["status"], "Merged")
         self.assertIn("archived_at", status["prs"]["acme/web#12"])
+
+    def test_archive_pr_status_marks_issue_done_when_all_associated_prs_are_merged(self) -> None:
+        pr = OpenPullRequest(
+            "acme/web",
+            12,
+            "https://github.com/acme/web/pull/12",
+            "ENG-1: Ship it",
+            "codex/eng-1",
+            "main",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "issues": {
+                            "ENG-1": {
+                                "identifier": "ENG-1",
+                                "status": "PR ready",
+                                "prs": "https://github.com/acme/web/pull/12",
+                            }
+                        },
+                        "prs": {
+                            "acme/web#12": {
+                                "key": "acme/web#12",
+                                "repo": "acme/web",
+                                "number": 12,
+                                "url": "https://github.com/acme/web/pull/12",
+                                "issue": "ENG-1",
+                                "status": "Ready for review",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                self.assertTrue(archive_pr_status(pr))
+                status = read_status()
+
+        self.assertEqual(status["issues"]["ENG-1"]["status"], "Done")
+        self.assertEqual(status["issues"]["ENG-1"]["merged_prs"], "https://github.com/acme/web/pull/12")
+        self.assertIn("pr_merged_at", status["issues"]["ENG-1"])
+
+    def test_archive_pr_status_waits_for_all_associated_prs_before_marking_issue_done(self) -> None:
+        pr = OpenPullRequest(
+            "acme/web",
+            12,
+            "https://github.com/acme/web/pull/12",
+            "ENG-1: Web",
+            "codex/eng-1",
+            "main",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "issues": {"ENG-1": {"identifier": "ENG-1", "status": "PR ready"}},
+                        "prs": {
+                            "acme/web#12": {
+                                "key": "acme/web#12",
+                                "repo": "acme/web",
+                                "number": 12,
+                                "url": "https://github.com/acme/web/pull/12",
+                                "issue": "ENG-1",
+                                "status": "Ready for review",
+                            },
+                            "acme/api#7": {
+                                "key": "acme/api#7",
+                                "repo": "acme/api",
+                                "number": 7,
+                                "url": "https://github.com/acme/api/pull/7",
+                                "issue": "ENG-1",
+                                "status": "Ready for review",
+                            },
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=path):
+                self.assertTrue(archive_pr_status(pr))
+                status = read_status()
+
+        self.assertEqual(status["issues"]["ENG-1"]["status"], "PR ready")
+        self.assertNotIn("merged_prs", status["issues"]["ENG-1"])
 
     def test_web_log_index_and_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1096,6 +1339,21 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(tasks[1]["log_count"], 2)
         self.assertEqual(len(tasks[1]["stages"]), 2)
 
+    def test_web_task_index_keeps_latest_stage_headline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            older = tmp_path / "20260517-090000-eng-75-planner.log"
+            newer = tmp_path / "20260517-091000-eng-75-review.log"
+            with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                older.write_text("tokens used\n1\nOlder planner headline.", encoding="utf-8")
+                newer.write_text("tokens used\n2\nLatest review headline.", encoding="utf-8")
+                os.utime(older, (1_779_000_000, 1_779_000_000))
+                os.utime(newer, (1_779_003_600, 1_779_003_600))
+
+                tasks = task_index()
+
+        self.assertEqual(tasks[0]["headline"], "Latest review headline.")
+
     def test_task_from_log_name_extracts_linear_and_pr_feedback_tasks(self) -> None:
         self.assertEqual(task_from_log_name("20260517-090000-eng-75-review.log")["key"], "eng-75")
         self.assertEqual(task_from_log_name("20260517-092000-data-48-pr-feedback.log")["type"], "PR feedback")
@@ -1123,19 +1381,28 @@ class CoreTests(unittest.TestCase):
                 (tmp_path / "status.json").write_text(
                     '{"issues":{"ENG-1":{"identifier":"ENG-1","status":"Done","project":"Project X",'
                     '"workspace_path":"/tmp/workspace","repos":[{"key":"web","path":"/tmp/workspace/web"}],'
+                    '"prs":"https://github.com/acme/web/pull/1",'
                     '"updated_at":"2026-01-01T00:00:00"}},'
-                    '"prs":{"acme/web#1":{"key":"acme/web#1","status":"Ready","repo_path":"/tmp/workspace/web",'
-                    '"updated_at":"2026-01-01T00:00:01"}},'
-                    '"archived_prs":{"acme/web#2":{"key":"acme/web#2","status":"Merged",'
-                    '"archived_at":"2026-01-01T00:00:02"}}}',
+                    '"prs":{'
+                    '"acme/web#1":{"key":"acme/web#1","status":"Ready","repo_path":"/tmp/workspace/web",'
+                    '"updated_at":"2026-01-01T00:00:01"},'
+                    '"acme/web#2":{"key":"acme/web#2","status":"Ready","issue":"ENG-1",'
+                    '"repo_path":"/tmp/workspace/web","updated_at":"2026-01-01T00:00:02"}},'
+                    '"archived_prs":{'
+                    '"acme/web#3":{"key":"acme/web#3","status":"Merged",'
+                    '"archived_at":"2026-01-01T00:00:03"},'
+                    '"acme/web#4":{"key":"acme/web#4","status":"Merged","issue":"ENG-1",'
+                    '"archived_at":"2026-01-01T00:00:04"}}}',
                     encoding="utf-8",
                 )
                 summary = status_index()
         self.assertEqual(summary["issues"][0]["identifier"], "ENG-1")
         self.assertEqual(summary["issues"][0]["project"], "Project X")
+        self.assertEqual(summary["issues"][0]["prs"], "https://github.com/acme/web/pull/1")
         self.assertEqual(summary["prs"][0]["key"], "acme/web#1")
         self.assertEqual(summary["prs"][0]["repo_path"], "/tmp/workspace/web")
-        self.assertEqual(summary["archived_prs"][0]["key"], "acme/web#2")
+        self.assertEqual([item["key"] for item in summary["prs"]], ["acme/web#1"])
+        self.assertEqual([item["key"] for item in summary["archived_prs"]], ["acme/web#3"])
 
     def test_archive_status_item_moves_status_entries_to_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
