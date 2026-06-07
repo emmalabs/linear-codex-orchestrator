@@ -53,6 +53,13 @@ export function App() {
   const orchestrationRef = React.useRef<HTMLDivElement | null>(null);
   const shouldFollowRef = React.useRef(true);
 
+  const scrollOrchestrationToBottom = React.useCallback(() => {
+    const element = orchestrationRef.current;
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, []);
+
   const refreshConfig = React.useCallback(async () => {
     const response = await fetch("/api/config", { cache: "no-store" });
     const config = await response.json() as ConfigResponse;
@@ -110,11 +117,10 @@ export function App() {
   }, []);
 
   React.useLayoutEffect(() => {
-    const element = orchestrationRef.current;
-    if (element && shouldFollowRef.current) {
-      element.scrollTop = element.scrollHeight;
+    if (shouldFollowRef.current) {
+      scrollOrchestrationToBottom();
     }
-  }, [data.orchestration]);
+  }, [data.orchestration, scrollOrchestrationToBottom]);
 
   React.useEffect(() => {
     const syncRouteFromHistory = () => {
@@ -234,6 +240,17 @@ export function App() {
   const selectedDetail = detailFromRoute(route, data);
   const activeTab = route.section;
   const step = currentStep(data.orchestration);
+  const dashboardVisible = !selectedDetail && (activeTab === "issues" || activeTab === "prs");
+
+  React.useLayoutEffect(() => {
+    if (!dashboardVisible) {
+      return;
+    }
+    shouldFollowRef.current = true;
+    scrollOrchestrationToBottom();
+    const frame = window.requestAnimationFrame(scrollOrchestrationToBottom);
+    return () => window.cancelAnimationFrame(frame);
+  }, [dashboardVisible, scrollOrchestrationToBottom]);
 
   return (
     <MantineProvider defaultColorScheme="dark" theme={appTheme}>
