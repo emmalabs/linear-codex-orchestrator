@@ -779,6 +779,21 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(tasks[1]["log_count"], 2)
         self.assertEqual(len(tasks[1]["stages"]), 2)
 
+    def test_web_task_index_keeps_latest_stage_headline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            older = tmp_path / "20260517-090000-eng-75-planner.log"
+            newer = tmp_path / "20260517-091000-eng-75-review.log"
+            with patch("linear_codex_orchestrator.web_server.LOG_DIR", tmp_path):
+                older.write_text("tokens used\n1\nOlder planner headline.", encoding="utf-8")
+                newer.write_text("tokens used\n2\nLatest review headline.", encoding="utf-8")
+                os.utime(older, (1_779_000_000, 1_779_000_000))
+                os.utime(newer, (1_779_003_600, 1_779_003_600))
+
+                tasks = task_index()
+
+        self.assertEqual(tasks[0]["headline"], "Latest review headline.")
+
     def test_task_from_log_name_extracts_linear_and_pr_feedback_tasks(self) -> None:
         self.assertEqual(task_from_log_name("20260517-090000-eng-75-review.log")["key"], "eng-75")
         self.assertEqual(task_from_log_name("20260517-092000-data-48-pr-feedback.log")["type"], "PR feedback")
