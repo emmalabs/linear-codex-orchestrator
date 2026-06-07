@@ -117,9 +117,9 @@ query IssueContext($id: String!) {
 
     async def issue_comments(self, issue: LinearIssue) -> list[LinearCommentFeedback]:
         query = """
-query IssueComments($id: String!) {
+query IssueComments($id: String!, $after: String) {
   issue(id: $id) {
-    comments(first: 250) {
+    comments(first: 250, after: $after) {
       nodes {
         id
         body
@@ -128,14 +128,29 @@ query IssueComments($id: String!) {
         updatedAt
         user { name displayName }
       }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
     }
   }
 }
 """
-        payload = await self._graphql(query, {"id": issue.id})
+        nodes: list[dict[str, Any]] = []
+        after: str | None = None
+        while True:
+            payload = await self._graphql(query, {"id": issue.id, "after": after})
+            comments = payload["issue"]["comments"]
+            nodes.extend(comments["nodes"])
+            page_info = comments["pageInfo"]
+            if not page_info["hasNextPage"]:
+                break
+            after = page_info["endCursor"]
+            if not after:
+                break
         comments = [
             linear_comment_from_node(node, issue.url)
-            for node in payload["issue"]["comments"]["nodes"]
+            for node in nodes
         ]
         return sorted(comments, key=lambda item: item.created_at)
 

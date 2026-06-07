@@ -186,7 +186,7 @@ class Orchestrator:
         return await self.linear.ready_issues(
             self.settings.in_review_status,
             None,
-            self.settings.max_issues_per_tick,
+            max(self.settings.max_issues_per_tick * 10, 10),
             (self.settings.running_label, self.settings.blocked_label),
             tuple(sorted(self.settings.workspace_map)),
         )
@@ -335,8 +335,8 @@ class Orchestrator:
             log(f"Skipping {issue.identifier}: {exc}")
             return
         branch = branch_name(issue.identifier, issue.title)
-        if not self.branch_available_in_all_repos(workspace, branch):
-            log(f"Skipping {issue.identifier}: branch {branch} is not available in all repos")
+        if not self.linear_feedback_branch_available(workspace, branch):
+            log(f"Skipping {issue.identifier}: branch {branch} is not available in any repo")
             return
         lock_name = f"{issue.team_key}:{workspace.path}"
         with lock_for_repo(self.settings.lock_dir, lock_name) as lock:
@@ -365,8 +365,14 @@ class Orchestrator:
             issue_context = await self.linear.issue_context(issue)
             self.checkout_existing_branch_from_origin(workspace, branch)
             update_issue_linear_feedback_status(issue, "Fixing Linear feedback", len(feedback))
-            summary = await self._fix_linear_feedback(issue, workspace, issue_context, branch, feedback)
-            changed_repos = self.uncommitted_changed_repos(workspace)
+            summary = await self._fix_linear_feedback(
+                issue,
+                workspace,
+                issue_context,
+                branch,
+                feedback,
+            )
+            changed_repos = self.changed_repos(workspace)
             prs: list[PullRequest] = []
             for repo_key, repo in changed_repos.items():
                 if has_changes(repo.path):
@@ -859,16 +865,22 @@ class Orchestrator:
     def checkout_existing_branch_from_origin(self, workspace: WorkspaceConfig, branch: str) -> None:
         failed: list[str] = []
         for repo_key, repo in workspace.repos.items():
-            if not remote_branch_exists(repo.path, branch):
+            if remote_branch_exists(repo.path, branch):
+                try:
+                    run_git(repo.path, "fetch", "origin", branch)
+                    run_git(repo.path, "checkout", "-B", branch, f"origin/{branch}")
+                except Exception:
+                    failed.append(repo_key)
+            elif branch_exists(repo.path, branch):
                 log(f"{repo_key}: branch {branch} has no origin branch; using local branch")
                 if not checkout_branch(repo.path, branch):
                     failed.append(repo_key)
-                continue
-            try:
-                run_git(repo.path, "fetch", "origin", branch)
-                run_git(repo.path, "checkout", "-B", branch, f"origin/{branch}")
-            except Exception:
-                failed.append(repo_key)
+            else:
+                log(f"{repo_key}: branch {branch} is missing; recreating it from {repo.base}")
+                try:
+                    ensure_branch(repo.path, repo.base, branch)
+                except Exception:
+                    failed.append(repo_key)
         if failed:
             raise RuntimeError(
                 f"Cannot refresh branch {branch} from origin in: {', '.join(failed)}"
@@ -879,6 +891,12 @@ class Orchestrator:
 
     def branch_available_in_all_repos(self, workspace: WorkspaceConfig, branch: str) -> bool:
         return all(
+            branch_exists(repo.path, branch) or remote_branch_exists(repo.path, branch)
+            for repo in workspace.repos.values()
+        )
+
+    def linear_feedback_branch_available(self, workspace: WorkspaceConfig, branch: str) -> bool:
+        return any(
             branch_exists(repo.path, branch) or remote_branch_exists(repo.path, branch)
             for repo in workspace.repos.values()
         )
