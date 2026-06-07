@@ -421,10 +421,10 @@ function FeedRow({ item }: { item: FeedItem }) {
                 color="blue"
                 radius="sm"
                 size="sm"
-                title={`Workspace: ${item.workspace.label}`}
+                title={item.workspace.label}
                 variant="light"
               >
-                Workspace: {item.workspace.label}
+                {item.workspace.label}
               </Badge>
               {item.codexApproved ? <Badge color="green" radius="sm" size="sm" variant="light">👍 Codex approved</Badge> : null}
             </Group>
