@@ -93,8 +93,12 @@ body {
   white-space: nowrap;
 }
 
-.app-navbar {
+.app-navbar,
+.feed-panel {
   background: color-mix(in srgb, var(--mantine-color-dark-7) 88%, var(--mantine-color-dark-8));
+}
+
+.app-navbar {
   border-right-color: color-mix(in srgb, var(--mantine-color-default-border) 76%, transparent);
 }
 
@@ -102,10 +106,14 @@ body {
   min-height: 0;
 }
 
-.sidebar-status {
+.sidebar-status,
+.feed-row {
   background: color-mix(in srgb, var(--mantine-color-dark-6) 72%, var(--mantine-color-dark-7));
   border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 64%, transparent);
   border-radius: 8px;
+}
+
+.sidebar-status {
   padding: 10px;
 }
 
@@ -135,7 +143,8 @@ body {
   width: 100%;
 }
 
-.nav-item:hover {
+.nav-item:hover,
+.feed-row:hover {
   background: color-mix(in srgb, var(--mantine-color-dark-5) 58%, var(--mantine-color-dark-7));
 }
 
@@ -349,7 +358,6 @@ body {
 }
 
 .feed-panel {
-  background: color-mix(in srgb, var(--mantine-color-dark-7) 88%, var(--mantine-color-dark-8));
   height: 100%;
 }
 
@@ -444,9 +452,6 @@ body {
 }
 
 .feed-row {
-  background: color-mix(in srgb, var(--mantine-color-dark-6) 72%, var(--mantine-color-dark-7));
-  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 64%, transparent);
-  border-radius: 8px;
   display: grid;
   grid-template-columns: 4px minmax(0, 1fr);
   overflow: hidden;
@@ -456,7 +461,6 @@ body {
 }
 
 .feed-row:hover {
-  background: color-mix(in srgb, var(--mantine-color-dark-5) 58%, var(--mantine-color-dark-7));
   border-color: color-mix(in srgb, var(--mantine-color-blue-5) 30%, var(--mantine-color-default-border));
 }
 
