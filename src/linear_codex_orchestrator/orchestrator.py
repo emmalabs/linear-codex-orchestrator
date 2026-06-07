@@ -348,14 +348,23 @@ class Orchestrator:
         if not self.branch_exists_in_all_repos(workspace, branch):
             log(f"Skipping {issue.identifier}: branch {branch} is not present in all repos")
             return
-        lock_name = f"linear-feedback:{issue.team_key}:{workspace.path}"
+        lock_name = f"{issue.team_key}:{workspace.path}"
         with lock_for_repo(self.settings.lock_dir, lock_name) as lock:
             if not lock.acquired:
-                log(f"Skipping {issue.identifier}: Linear feedback lock is already held")
+                log(f"Skipping {issue.identifier}: workspace lock is already held")
                 return
             comments = await self.linear.issue_comments(issue)
             state = linear_feedback_state(self.settings.lock_dir, issue.identifier)
             seen = read_processed_feedback(state)
+            if not state.exists():
+                baseline = {item.key for item in actionable_linear_feedback(comments, set())}
+                write_processed_feedback(state, baseline)
+                log(
+                    f"{issue.identifier}: initialized Linear feedback state "
+                    f"with {len(baseline)} existing comment(s)"
+                )
+                update_issue_linear_feedback_status(issue, "No new Linear feedback", 0)
+                return
             feedback = actionable_linear_feedback(comments, seen)
             if not feedback:
                 log(f"{issue.identifier}: no new Linear feedback")
@@ -1686,7 +1695,9 @@ def update_issue_linear_feedback_status(
     assert isinstance(issues, dict)
     current = issues.get(issue.identifier, {})
     if not isinstance(current, dict):
-        current = {
+        current = {}
+    current.update(
+        {
             "identifier": issue.identifier,
             "title": issue.title,
             "url": issue.url,
@@ -1694,6 +1705,7 @@ def update_issue_linear_feedback_status(
             "project": issue.project_name,
             "project_url": issue.project_url,
         }
+    )
     current["linear_feedback"] = linear_feedback_status_text(status, feedback_count)
     if feedback_count is not None:
         current["linear_feedback_count"] = feedback_count
