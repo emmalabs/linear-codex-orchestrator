@@ -498,13 +498,6 @@ body {
   min-width: 0;
 }
 
-.feed-workspace-chip [class*="mantine-Badge-label"] {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .feed-row-actions {
   flex: 0 0 auto;
 }
@@ -542,6 +535,7 @@ body {
   max-width: 220px;
 }
 
+.feed-workspace-chip [class*="mantine-Badge-label"],
 .feed-meta-chip [class*="mantine-Badge-label"] {
   display: block;
   overflow: hidden;
