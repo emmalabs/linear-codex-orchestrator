@@ -94,7 +94,7 @@ body {
 }
 
 .app-navbar {
-  background: color-mix(in srgb, var(--mantine-color-dark-8) 94%, var(--mantine-color-blue-9));
+  background: color-mix(in srgb, var(--mantine-color-dark-8) 96%, var(--mantine-color-gray-9));
   border-right-color: color-mix(in srgb, var(--mantine-color-default-border) 76%, transparent);
 }
 
@@ -1030,6 +1030,7 @@ body {
 
   .app-navbar {
     height: auto !important;
+    margin-top: var(--app-shell-header-height, 56px);
     min-height: 0 !important;
     position: static;
   }

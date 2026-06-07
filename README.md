@@ -94,7 +94,7 @@ The dashboard autosaves a private `.orchestrator/config.db` SQLite database that
 
 The default config runs for real, so the daemon can update Linear, push branches, and open pull requests. To test configuration without mutations, enable Dry run in the Orchestrator tab.
 
-Daemon mode also starts the React dashboard at `http://127.0.0.1:8765` so you can follow orchestration logs, issue/PR status, and inspect detailed Codex stage logs. `./scripts/setup.sh` builds the dashboard, and `./scripts/run.sh` builds it automatically if `frontend/dist/` is missing.
+Daemon mode also starts the React dashboard at `http://127.0.0.1:8765` so you can follow orchestration logs, issue/PR status, and inspect detailed Codex stage logs. `./scripts/setup.sh` builds the dashboard, and `./scripts/run.sh` builds it automatically if `frontend/dist/` is missing or stale.
 
 For code hot reload while developing the orchestrator, run:
 

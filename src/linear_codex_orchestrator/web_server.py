@@ -134,27 +134,25 @@ class LogRequestHandler(BaseHTTPRequestHandler):
 
     def _send_html(self, body: str) -> None:
         payload = body.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self._send_payload(payload, "text/html; charset=utf-8")
+
+    def _send_payload(self, payload: bytes, content_type: str, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
 
     def _send_json(self, value: object) -> None:
         payload = json.dumps(value, indent=2).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_payload(payload, "application/json; charset=utf-8")
 
     def _send_error_json(self, status: int, message: str) -> None:
         payload = json.dumps({"ok": False, "error": message}, indent=2).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_payload(payload, "application/json; charset=utf-8", status)
 
     def _write_config(self) -> None:
         try:
@@ -234,11 +232,7 @@ class LogRequestHandler(BaseHTTPRequestHandler):
 
     def _send_file(self, path: Path, content_type: str) -> None:
         payload = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_payload(payload, content_type)
 
 
 def config_index() -> dict[str, object]:
