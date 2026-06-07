@@ -90,7 +90,7 @@ Open `http://127.0.0.1:8765`, then configure the dashboard:
 - `Workspaces`: map Linear team keys to local workspace folders and repositories.
 - `Orchestrator`: set Linear routing, runtime behavior, Codex model/reasoning/sandbox options, dry run, and hot reload.
 
-The wizard autosaves a private `.orchestrator/config.db` SQLite database that is ignored by git. Hot reload is enabled by default, so saved setup changes apply before the next daemon tick. If you disable hot reload, restart the daemon after saving config changes.
+The dashboard autosaves a private `.orchestrator/config.db` SQLite database that is ignored by git. Hot reload is enabled by default, so saved setup changes apply before the next daemon tick. If you disable hot reload, restart the daemon after saving config changes.
 
 The default config runs for real, so the daemon can update Linear, push branches, and open pull requests. To test configuration without mutations, enable Dry run in the Orchestrator tab.
 
