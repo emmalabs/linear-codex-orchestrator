@@ -1,6 +1,10 @@
 export type IssueStatus = {
   identifier?: string;
   title?: string;
+  description?: string;
+  issue_context?: string;
+  planner_brief?: string;
+  context_status?: "metadata" | "linear_context" | "planned" | string;
   url?: string;
   project?: string;
   project_url?: string;
