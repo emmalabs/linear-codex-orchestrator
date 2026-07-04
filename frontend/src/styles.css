@@ -492,6 +492,12 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+.feed-workspace-chip {
+  flex: 1 1 auto;
+  max-width: min(220px, 38vw);
+  min-width: 0;
+}
+
 .feed-row-actions {
   flex: 0 0 auto;
 }
@@ -529,6 +535,7 @@ body {
   max-width: 220px;
 }
 
+.feed-workspace-chip [class*="mantine-Badge-label"],
 .feed-meta-chip [class*="mantine-Badge-label"] {
   display: block;
   overflow: hidden;
@@ -811,11 +818,6 @@ body {
   top: 0;
 }
 
-.detail-repositories {
-  border-bottom: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 44%, transparent);
-  padding-bottom: 14px;
-}
-
 .issue-brief {
   background: color-mix(in srgb, var(--mantine-color-dark-7) 56%, transparent);
   border: 1px solid color-mix(in srgb, var(--mantine-color-default-border) 48%, transparent);
@@ -824,22 +826,6 @@ body {
 
 .issue-brief-body {
   max-height: 420px;
-}
-
-.issue-source-context {
-  max-height: 360px;
-}
-
-.source-context-accordion [class*="mantine-Accordion-item"] {
-  background: color-mix(in srgb, var(--mantine-color-dark-8) 72%, transparent);
-  border-color: color-mix(in srgb, var(--mantine-color-default-border) 54%, transparent);
-  border-radius: 6px;
-}
-
-.source-context-accordion [class*="mantine-Accordion-control"] {
-  color: var(--mantine-color-dimmed);
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .detail-tile {

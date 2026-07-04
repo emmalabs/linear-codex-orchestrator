@@ -1,8 +1,9 @@
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { IconArchive, IconArrowLeft, IconBrandGithub, IconExternalLink, IconFolder } from "@tabler/icons-react";
+import { IconArchive, IconArrowLeft, IconBrandGithub, IconCopy, IconExternalLink, IconFolder } from "@tabler/icons-react";
 import {
+  ActionIcon,
   Accordion,
   Badge,
   Box,
@@ -15,6 +16,7 @@ import {
   Stack,
   Table,
   Text,
+  Tooltip,
   Title
 } from "@mantine/core";
 import type { IssueStatus, PullRequestStatus, SelectedDetail, StageLog, StageLogSummary, TaskLog } from "../types";
@@ -109,7 +111,6 @@ export function DetailPage(props: {
             </Stack>
           </Paper>
 
-          {props.detail.kind === "issue" ? <IssueRepositories issue={props.detail.item} /> : null}
           {props.detail.kind === "issue" ? <IssueBrief issue={props.detail.item} /> : null}
 
           <Group className="timeline-heading" justify="space-between">
@@ -215,34 +216,15 @@ function uniqueValues(values: string[]) {
   return [...new Set(values)].map((value) => ({ value, label: value }));
 }
 
-function IssueRepositories({ issue }: { issue: IssueStatus }) {
-  const repos = issueRepos(issue);
-  if (!repos.length) {
-    return null;
-  }
-  return (
-    <Box className="detail-repositories">
-      <Text c="dimmed" fw={700} size="xs" tt="uppercase">Repositories</Text>
-      <Stack gap={4} mt={4}>
-        {repos.map((repo) => (
-          <Text className="truncate" key={repo.key} size="sm">
-            {[repo.key, repo.github, repo.path, repo.base].filter(Boolean).join(" · ")}
-          </Text>
-        ))}
-      </Stack>
-    </Box>
-  );
-}
-
 function IssueBrief({ issue }: { issue: IssueStatus }) {
   const plannerBrief = cleanBriefText(issue.planner_brief);
-  const issueContext = cleanBriefText(issue.issue_context);
-  const description = cleanBriefText(issue.description);
-  const sourceContext = issueContext || description;
-  const prePlanningBrief = issueContext || description;
+  const prePlanningBrief = plannerBrief
+    ? ""
+    : cleanBriefText(issue.issue_context) || cleanBriefText(issue.description);
+  const brief = plannerBrief || prePlanningBrief;
   const statusLabel = issueBriefStatusLabel(issue.context_status, Boolean(plannerBrief));
 
-  if (!plannerBrief && !prePlanningBrief) {
+  if (!brief) {
     return null;
   }
 
@@ -254,20 +236,8 @@ function IssueBrief({ issue }: { issue: IssueStatus }) {
           <Badge color={plannerBrief ? "green" : "cyan"} size="sm" variant="light">{statusLabel}</Badge>
         </Group>
         <Box className="formatted-log-message issue-brief-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{plannerBrief || prePlanningBrief}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{brief}</ReactMarkdown>
         </Box>
-        {plannerBrief && sourceContext ? (
-          <Accordion className="source-context-accordion" variant="contained">
-            <Accordion.Item value="source-context">
-              <Accordion.Control>Source context</Accordion.Control>
-              <Accordion.Panel>
-                <Box className="formatted-log-message issue-source-context">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{sourceContext}</ReactMarkdown>
-                </Box>
-              </Accordion.Panel>
-            </Accordion.Item>
-          </Accordion>
-        ) : null}
       </Stack>
     </Paper>
   );
@@ -296,9 +266,9 @@ function DetailProperties({ detail, tasks }: { detail: SelectedDetail; tasks: Ta
       <Paper className="detail-properties" p="md">
         <Stack gap="sm">
           <Text fw={800}>Properties</Text>
-          <DetailTile label="Status" value={issue.status} />
+          <BranchDetailTile branch={issue.branch} />
           <DetailTile label="Updated" value={issue.updated_at} />
-          <DetailTile label="Changed repos" value={issue.changed_repos ?? legacyChangedRepos(issue)} />
+          <IssueRepositoriesDetailTile issue={issue} />
           <DetailTile label="PR feedback" value={issue.pr_feedback} />
           <DetailTile label="Linear feedback" value={issue.linear_feedback} />
           <DetailTile label="Pull requests">
@@ -340,6 +310,54 @@ function DetailProperties({ detail, tasks }: { detail: SelectedDetail; tasks: Ta
         <ApprovalDetails item={pr} />
       </Stack>
     </Paper>
+  );
+}
+
+function BranchDetailTile({ branch }: { branch?: string }) {
+  const copyBranch = async () => {
+    if (!branch) {
+      return;
+    }
+    await navigator.clipboard.writeText(branch);
+  };
+
+  return (
+    <DetailTile label="Branch">
+      {branch ? (
+        <Group gap={6} wrap="nowrap">
+          <Text className="truncate" size="sm">{branch}</Text>
+          <Tooltip label="Copy branch">
+            <ActionIcon aria-label="Copy branch" onClick={copyBranch} size="sm" variant="subtle">
+              <IconCopy size={14} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      ) : (
+        <Text c="dimmed" size="sm">-</Text>
+      )}
+    </DetailTile>
+  );
+}
+
+function IssueRepositoriesDetailTile({ issue }: { issue: IssueStatus }) {
+  const repos = issueRepos(issue);
+  const legacyRepos = legacyChangedRepos(issue);
+  return (
+    <DetailTile label="Repositories">
+      {repos.length ? (
+        <Stack gap={2}>
+          {repos.map((repo) => (
+            <Text className="truncate" key={repo.key} size="sm">
+              {[repo.key, repo.github, repo.path, repo.base].filter(Boolean).join(" · ")}
+            </Text>
+          ))}
+        </Stack>
+      ) : legacyRepos ? (
+        <Text className="truncate" size="sm">{legacyRepos}</Text>
+      ) : (
+        <Text c="dimmed" size="sm">-</Text>
+      )}
+    </DetailTile>
   );
 }
 

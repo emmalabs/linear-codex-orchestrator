@@ -234,7 +234,7 @@ def _run_process(
         while True:
             if time.monotonic() > deadline:
                 process.kill()
-                returncode = process.wait()
+                process.wait()
                 stdout = "".join(chunks)
                 raise RuntimeError(
                     f"codex exec timed out after {timeout_seconds}s\n\n{strip_ansi(stdout).strip()}"

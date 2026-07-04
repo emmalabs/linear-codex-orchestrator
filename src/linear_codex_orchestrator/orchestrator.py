@@ -473,11 +473,14 @@ class Orchestrator:
 
     async def _process_locked_issue(self, issue: LinearIssue, workspace: WorkspaceConfig, resume: bool = False) -> None:
         branch = branch_name(issue.identifier, issue.title)
+
+        def set_issue_status(status: str, **extra: object) -> None:
+            update_issue_status(issue, status, branch=branch, **extra)
+
         repo_list = ", ".join(workspace.repos)
         mode = "resuming" if resume else "processing"
         log(f"{mode.capitalize()} {issue.identifier} in {workspace.path} across: {repo_list}")
-        update_issue_status(
-            issue,
+        set_issue_status(
             "Resuming" if resume else "Starting",
             description=issue.description,
             context_status="metadata",
@@ -486,15 +489,14 @@ class Orchestrator:
         if self.settings.dry_run:
             action = "resume branch" if resume else "create branch"
             log(f"[dry-run] Would {action} {branch} and run Codex across {repo_list}")
-            update_issue_status(issue, "Dry run")
+            set_issue_status("Dry run")
             return
         if not resume:
             dirty_repos = self.dirty_workspace_repos(workspace)
             if dirty_repos:
                 joined = ", ".join(dirty_repos)
                 log(f"Skipping {issue.identifier}: workspace has uncommitted changes in: {joined}")
-                update_issue_status(
-                    issue,
+                set_issue_status(
                     "Workspace dirty",
                     dirty_repos=joined,
                     **workspace_status_context(workspace),
@@ -504,8 +506,7 @@ class Orchestrator:
         try:
             log(f"{issue.identifier}: reading full Linear issue context")
             issue_context = await self.linear.issue_context(issue)
-            update_issue_status(
-                issue,
+            set_issue_status(
                 "Linear context loaded",
                 issue_context=issue_context,
                 context_status="linear_context",
@@ -514,7 +515,7 @@ class Orchestrator:
             run_state = read_issue_run_state(issue.id, workspace.path) if resume else None
             if resume:
                 log(f"{issue.identifier}: resuming existing branch {branch}")
-                update_issue_status(issue, "Resuming branch")
+                set_issue_status("Resuming branch")
                 self.checkout_existing_branch(workspace, branch)
                 plan = run_state.plan if run_state and run_state.plan else resume_plan()
                 implementation_summary = (
@@ -535,7 +536,7 @@ class Orchestrator:
                         plan=plan,
                     )
                     log(f"{issue.identifier}: resumed implementation started")
-                    update_issue_status(issue, "Implementing")
+                    set_issue_status("Implementing")
                     implementation_summary = await self._implement(issue, workspace, issue_context, plan)
                     log(f"{issue.identifier}: resumed implementation finished; detecting changed repos")
                     changed_repos = self.changed_repos(workspace)
@@ -553,25 +554,24 @@ class Orchestrator:
                     log(f"{issue.identifier}: skipping implementation; resuming after {resume_stage}")
                     changed_repos = self.changed_repos(workspace)
                 log(f"{issue.identifier}: changed repos: {', '.join(changed_repos) or 'none'}")
-                update_issue_status(issue, "Implemented", changed_repos=", ".join(changed_repos) or "none")
+                set_issue_status("Implemented", changed_repos=", ".join(changed_repos) or "none")
                 if resume_stage not in STAGES_AFTER_IMPLEMENTATION:
                     await self._try_linear_comment(issue, implementation_comment(changed_repos, implementation_summary))
             else:
                 log(f"{issue.identifier}: posting start comment")
                 await self.linear.comment(issue.id, start_comment(issue, workspace, branch))
                 log(f"{issue.identifier}: planning")
-                update_issue_status(issue, "Planning")
+                set_issue_status("Planning")
                 write_issue_run_state(issue.id, issue.identifier, workspace.path, branch, "planning")
                 plan = await self._plan(issue, workspace, issue_context)
-                update_issue_status(
-                    issue,
+                set_issue_status(
                     "Planning complete",
                     planner_brief=plan,
                     context_status="planned",
                     **workspace_status_context(workspace),
                 )
                 log(f"{issue.identifier}: preparing branch {branch} in {len(workspace.repos)} repo(s)")
-                update_issue_status(issue, "Preparing branches")
+                set_issue_status("Preparing branches")
                 for repo_key, repo in workspace.repos.items():
                     log(f"{issue.identifier}: ensuring {repo_key} branch {branch}")
                     ensure_branch(repo.path, repo.base, branch)
@@ -589,7 +589,7 @@ class Orchestrator:
                 await self.linear.add_label(issue.id, self.settings.running_label)
 
                 log(f"{issue.identifier}: implementation started")
-                update_issue_status(issue, "Implementing")
+                set_issue_status("Implementing")
                 write_issue_run_state(
                     issue.id,
                     issue.identifier,
@@ -602,7 +602,7 @@ class Orchestrator:
                 log(f"{issue.identifier}: implementation finished; detecting changed repos")
                 changed_repos = self.changed_repos(workspace)
                 log(f"{issue.identifier}: changed repos: {', '.join(changed_repos) or 'none'}")
-                update_issue_status(issue, "Implemented", changed_repos=", ".join(changed_repos) or "none")
+                set_issue_status("Implemented", changed_repos=", ".join(changed_repos) or "none")
                 self.commit_phase_changes(issue, changed_repos, "implementation")
                 write_issue_run_state(
                     issue.id,
@@ -619,7 +619,7 @@ class Orchestrator:
                     log(f"{issue.identifier}: skipping optimization; resuming after {run_state.stage}")
                 else:
                     log(f"{issue.identifier}: optimization started")
-                    update_issue_status(issue, "Optimizing", changed_repos=", ".join(changed_repos))
+                    set_issue_status("Optimizing", changed_repos=", ".join(changed_repos))
                     write_issue_run_state(
                         issue.id,
                         issue.identifier,
@@ -639,7 +639,7 @@ class Orchestrator:
                     )
                     log(f"{issue.identifier}: optimization finished; detecting changed repos")
                     changed_repos = self.changed_repos(workspace)
-                    update_issue_status(issue, "Optimized", changed_repos=", ".join(changed_repos) or "none")
+                    set_issue_status("Optimized", changed_repos=", ".join(changed_repos) or "none")
                     self.commit_phase_changes(issue, changed_repos, "optimization")
                     write_issue_run_state(
                         issue.id,
@@ -652,7 +652,7 @@ class Orchestrator:
                     )
                     await self._try_linear_comment(issue, optimization_comment(optimization_summary))
             log(f"{issue.identifier}: review started")
-            update_issue_status(issue, "Reviewing", changed_repos=", ".join(changed_repos) or "none")
+            set_issue_status("Reviewing", changed_repos=", ".join(changed_repos) or "none")
             write_issue_run_state(
                 issue.id,
                 issue.identifier,
@@ -664,11 +664,11 @@ class Orchestrator:
             )
             review = await self._review(issue, workspace, issue_context, plan, changed_repos)
             log(f"{issue.identifier}: review {'passed' if review.passed else 'failed'}")
-            update_issue_status(issue, "Review passed" if review.passed else "Review failed")
+            set_issue_status("Review passed" if review.passed else "Review failed")
             await self._try_linear_comment(issue, review_comment(review))
             if changed_repos and not review.passed:
                 log(f"{issue.identifier}: reviewer-fix pass started")
-                update_issue_status(issue, "Fixing review findings")
+                set_issue_status("Fixing review findings")
                 write_issue_run_state(
                     issue.id,
                     issue.identifier,
@@ -701,7 +701,7 @@ class Orchestrator:
                 await self._try_linear_comment(issue, review_fix_comment(fix_summary))
                 review = await self._review(issue, workspace, issue_context, plan, changed_repos)
                 log(f"{issue.identifier}: re-review {'passed' if review.passed else 'failed'}")
-                update_issue_status(issue, "Re-review passed" if review.passed else "Re-review failed")
+                set_issue_status("Re-review passed" if review.passed else "Re-review failed")
                 await self._try_linear_comment(issue, review_comment(review))
         except PlannerBlocked as exc:
             log(
@@ -715,11 +715,11 @@ class Orchestrator:
                 self.linear.add_label(issue.id, self.settings.blocked_label),
             )
             await self._clear_running_label(issue)
-            update_issue_status(issue, "Blocked")
+            set_issue_status("Blocked")
             return
         except Exception as exc:
             log(f"{issue.identifier}: failed: {exc}")
-            update_issue_status(issue, "Failed", error=str(exc))
+            set_issue_status("Failed", error=str(exc))
             await self._try_linear_comment(issue, f"Codex orchestration failed:\n\n```text\n{exc}\n```")
             if not resume:
                 await self._clear_running_label(issue)
@@ -730,7 +730,7 @@ class Orchestrator:
             await self._clear_running_label(issue)
             clear_issue_run_state(issue.id, workspace.path)
             log(f"{issue.identifier}: no changes detected; stopping")
-            update_issue_status(issue, "No changes")
+            set_issue_status("No changes")
             return
 
         if not review.passed:
@@ -741,7 +741,7 @@ class Orchestrator:
             await self._clear_running_label(issue)
             clear_issue_run_state(issue.id, workspace.path)
             log(f"{issue.identifier}: reviewer blocked automatic PR")
-            update_issue_status(issue, "Reviewer blocked PR")
+            set_issue_status("Reviewer blocked PR")
             return
 
         write_issue_run_state(
@@ -798,7 +798,7 @@ class Orchestrator:
         await self._clear_running_label(issue)
         clear_issue_run_state(issue.id, workspace.path)
         log(f"{issue.identifier}: opened/updated {len(prs)} PR(s)")
-        update_issue_status(issue, "PR ready", prs=", ".join(pr.url for pr in prs))
+        set_issue_status("PR ready", prs=", ".join(pr.url for pr in prs))
 
     async def _try_linear_comment(self, issue: LinearIssue, body: str) -> bool:
         return await self._try_linear_action(

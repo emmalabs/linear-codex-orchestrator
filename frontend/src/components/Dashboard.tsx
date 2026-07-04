@@ -410,58 +410,68 @@ function FeedRow({ item }: { item: FeedItem }) {
   return (
     <>
       <UnstyledButton className={`feed-row feed-row-${item.tone}`} onClick={item.onOpen}>
-      <span className={`feed-row-accent feed-row-accent-${item.tone}`} aria-hidden="true" />
-      <Box className="feed-row-body" miw={0}>
-        <Group align="flex-start" justify="space-between" gap="sm" wrap="nowrap">
-          <Group gap="xs" miw={0} wrap="nowrap">
-            <span className={`status-dot status-dot-${item.tone}`} aria-hidden="true" />
-            <Text className="feed-row-key" fw={800} size="sm">{item.displayKey}</Text>
-            <StatusPill status={item.status} />
-            {item.codexApproved ? <Badge color="green" radius="sm" size="sm" variant="light">👍 Codex approved</Badge> : null}
-          </Group>
-          <Group className="feed-row-actions" gap={4} wrap="nowrap">
-            {timeLabel ? <Text c="dimmed" size="xs" title={item.updatedAt}>{timeLabel}</Text> : null}
-            {item.url ? (
-              <ActionIcon
-                aria-label={`Open ${item.displayKey}`}
-                component="a"
-                href={item.url}
-                onClick={(event) => event.stopPropagation()}
-                rel="noopener noreferrer"
+        <span className={`feed-row-accent feed-row-accent-${item.tone}`} aria-hidden="true" />
+        <Box className="feed-row-body" miw={0}>
+          <Group align="flex-start" justify="space-between" gap="sm" wrap="nowrap">
+            <Group gap="xs" miw={0} wrap="nowrap">
+              <span className={`status-dot status-dot-${item.tone}`} aria-hidden="true" />
+              <Text className="feed-row-key" fw={800} size="sm">{item.displayKey}</Text>
+              <StatusPill status={item.status} />
+              <Badge
+                className="feed-workspace-chip"
+                color="blue"
+                radius="sm"
                 size="sm"
-                target="_blank"
-                variant="subtle"
+                title={item.workspace.label}
+                variant="light"
               >
-                <IconExternalLink size={14} />
-              </ActionIcon>
-            ) : null}
-            {item.onArchive ? (
-              <ActionIcon
-                aria-label={`Archive ${item.displayKey}`}
-                className="feed-row-archive"
-                color="gray"
-                loading={isArchiving}
-                onClick={openArchiveModal}
-                size="sm"
-                title={`Archive ${item.displayKey}`}
-                variant="subtle"
-              >
-                <IconTrash size={14} />
-              </ActionIcon>
-            ) : null}
-          </Group>
-        </Group>
-        <Text className="feed-row-title" mt={4} size="sm">{item.title}</Text>
-        {item.meta.length ? (
-          <Group className="feed-meta" gap={6} mt="xs">
-            {item.meta.map((value) => (
-              <Badge className="feed-meta-chip" color="dark" key={value} radius="sm" size="sm" variant="light">
-                {value}
+                {item.workspace.label}
               </Badge>
-            ))}
+              {item.codexApproved ? <Badge color="green" radius="sm" size="sm" variant="light">👍 Codex approved</Badge> : null}
+            </Group>
+            <Group className="feed-row-actions" gap={4} wrap="nowrap">
+              {timeLabel ? <Text c="dimmed" size="xs" title={item.updatedAt}>{timeLabel}</Text> : null}
+              {item.url ? (
+                <ActionIcon
+                  aria-label={`Open ${item.displayKey}`}
+                  component="a"
+                  href={item.url}
+                  onClick={(event) => event.stopPropagation()}
+                  rel="noopener noreferrer"
+                  size="sm"
+                  target="_blank"
+                  variant="subtle"
+                >
+                  <IconExternalLink size={14} />
+                </ActionIcon>
+              ) : null}
+              {item.onArchive ? (
+                <ActionIcon
+                  aria-label={`Archive ${item.displayKey}`}
+                  className="feed-row-archive"
+                  color="gray"
+                  loading={isArchiving}
+                  onClick={openArchiveModal}
+                  size="sm"
+                  title={`Archive ${item.displayKey}`}
+                  variant="subtle"
+                >
+                  <IconTrash size={14} />
+                </ActionIcon>
+              ) : null}
+            </Group>
           </Group>
-        ) : null}
-      </Box>
+          <Text className="feed-row-title" mt={4} size="sm">{item.title}</Text>
+          {item.meta.length ? (
+            <Group className="feed-meta" gap={6} mt="xs">
+              {item.meta.map((value) => (
+                <Badge className="feed-meta-chip" color="dark" key={value} radius="sm" size="sm" variant="light">
+                  {value}
+                </Badge>
+              ))}
+            </Group>
+          ) : null}
+        </Box>
       </UnstyledButton>
       <Modal
         centered
