@@ -269,6 +269,8 @@ function DetailProperties({ detail, tasks }: { detail: SelectedDetail; tasks: Ta
           <BranchDetailTile branch={issue.branch} />
           <DetailTile label="Updated" value={issue.updated_at} />
           <IssueRepositoriesDetailTile issue={issue} />
+          <DetailTile label="PR feedback" value={issue.pr_feedback} />
+          <DetailTile label="Linear feedback" value={issue.linear_feedback} />
           <DetailTile label="Pull requests">
             {prs.length ? (
               <Stack gap={2}>

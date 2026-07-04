@@ -517,6 +517,7 @@ def task_from_log_name(name: str) -> dict[str, str]:
     body = match.group("body") if match else stem
     stage_names = (
         "implementation",
+        "linear-feedback",
         "optimization",
         "planner",
         "pr-feedback",
@@ -531,7 +532,12 @@ def task_from_log_name(name: str) -> dict[str, str]:
             stage = candidate
             task_key = body[: -len(suffix)]
             break
-    task_type = "PR feedback" if stage == "pr-feedback" else "Linear issue"
+    if stage == "pr-feedback":
+        task_type = "PR feedback"
+    elif stage == "linear-feedback":
+        task_type = "Linear feedback"
+    else:
+        task_type = "Linear issue"
     title = task_key.upper() if re.match(r"^[a-z]+-\d+$", task_key) else task_key
     return {
         "key": task_key,

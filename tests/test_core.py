@@ -27,6 +27,7 @@ from linear_codex_orchestrator.local_github_client import (
 )
 from linear_codex_orchestrator.linear_api_client import (
     LinearApiClient,
+    linear_comment_from_node,
     issue_from_node,
     issue_matches_labels,
     render_issue_context,
@@ -36,12 +37,15 @@ from linear_codex_orchestrator.local_linear_client import LocalLinearClient, is_
 from linear_codex_orchestrator.log_summary import last_interesting_line, summarize_codex_log, tokens_used, write_log_summary
 from linear_codex_orchestrator.orchestrator import (
     Orchestrator,
+    actionable_linear_feedback,
     archive_stale_prs,
     archive_pr_status,
     clear_issue_codex_approval,
     codex_log_path,
     implementation_comment,
     latest_codex_approval,
+    linear_feedback_prompt,
+    linear_feedback_state,
     log_session_start,
     planner_block_reason,
     planner_blocked_comment,
@@ -55,6 +59,7 @@ from linear_codex_orchestrator.orchestrator import (
     start_comment,
     truncate_text,
     update_issue_codex_approval,
+    update_issue_linear_feedback_status,
     update_issue_status,
     update_pr_feedback_status,
     update_pr_status,
@@ -62,9 +67,15 @@ from linear_codex_orchestrator.orchestrator import (
     write_processed_feedback,
 )
 from linear_codex_orchestrator.models import (
+    LinearCommentFeedback,
+    LinearIssue,
     OpenPullRequest,
+    PullRequest,
     PullRequestApproval,
     PullRequestFeedback,
+    ReviewResult,
+    is_orchestrator_linear_comment,
+    mark_linear_orchestrator_comment,
     parse_linear_issue,
 )
 from linear_codex_orchestrator.models import LinearTeam
@@ -292,6 +303,53 @@ class CoreTests(unittest.TestCase):
         self.assertIn("teams(first: 250)", calls[0][0])
         self.assertEqual(calls[0][1], {})
 
+    def test_linear_api_issue_comments_paginates_all_pages(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "issue-id",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        calls: list[dict[str, object]] = []
+
+        async def fake_graphql(_query: str, variables: dict[str, object]) -> dict[str, object]:
+            calls.append(variables)
+            after = variables.get("after")
+            node_id = "first" if after is None else "second"
+            return {
+                "issue": {
+                    "comments": {
+                        "nodes": [
+                            {
+                                "id": node_id,
+                                "body": f"{node_id} page",
+                                "url": f"https://linear.app/acme/issue/ENG-1#comment-{node_id}",
+                                "createdAt": f"2026-06-07T0{2 if after is None else 1}:00:00Z",
+                                "updatedAt": f"2026-06-07T0{2 if after is None else 1}:00:00Z",
+                                "user": {"displayName": "Reviewer", "name": "reviewer"},
+                            }
+                        ],
+                        "pageInfo": {
+                            "hasNextPage": after is None,
+                            "endCursor": "cursor-1" if after is None else None,
+                        },
+                    }
+                }
+            }
+
+        client = LinearApiClient("lin_api_test")
+        with patch.object(client, "_graphql", fake_graphql):
+            comments = asyncio.run(client.issue_comments(issue))
+
+        self.assertEqual([call["after"] for call in calls], [None, "cursor-1"])
+        self.assertEqual([comment.id for comment in comments], ["second", "first"])
+
     def test_validate_workspace_map_rejects_missing_paths(self) -> None:
         missing = Path("/definitely/missing/workspace")
         workspace_map = {
@@ -420,6 +478,484 @@ class CoreTests(unittest.TestCase):
         self.assertIn("Path: `src/app.py`", prompt)
         self.assertIn("Do not commit, push, create pull requests, or comment on GitHub", prompt)
 
+    def test_linear_feedback_prompt_loads_markdown_template(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"api": RepoConfig("acme/api", Path("/tmp/workspace/api"), "develop")},
+        )
+        prompt = linear_feedback_prompt(
+            issue,
+            workspace,
+            "# ENG-1: Ship it\n\nFull context",
+            "codex/eng-1-ship-it",
+            [
+                LinearCommentFeedback(
+                    key="linear-comment:c1:2026-06-07T09:00:00Z",
+                    id="c1",
+                    author="reviewer",
+                    body="Please cover the retry edge case.",
+                    url="https://linear.app/acme/issue/ENG-1#comment-c1",
+                    created_at="2026-06-07T08:00:00Z",
+                    updated_at="2026-06-07T09:00:00Z",
+                )
+            ],
+        )
+
+        self.assertIn("Address new Linear issue feedback", prompt)
+        self.assertIn("Please cover the retry edge case.", prompt)
+        self.assertIn("Existing branch: `codex/eng-1-ship-it`", prompt)
+        self.assertIn("Do not commit, push, create pull requests, move Linear issues, or comment on Linear", prompt)
+
+    def test_linear_comment_filter_ignores_orchestrator_content(self) -> None:
+        human = LinearCommentFeedback(
+            key="linear-comment:human:2026-06-07T09:00:00Z",
+            id="human",
+            author="reviewer",
+            body="Please add a regression test.",
+            url="https://linear.app/acme/issue/ENG-1#comment-human",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+        status = LinearCommentFeedback(
+            key="linear-comment:status:2026-06-07T08:00:00Z",
+            id="status",
+            author="aleix",
+            body="Codex plan:\n\nDo the work.",
+            url="https://linear.app/acme/issue/ENG-1#comment-status",
+            created_at="2026-06-07T08:00:00Z",
+            updated_at="2026-06-07T08:00:00Z",
+        )
+        marked = LinearCommentFeedback(
+            key="linear-comment:marked:2026-06-07T08:30:00Z",
+            id="marked",
+            author="aleix",
+            body=mark_linear_orchestrator_comment("Custom progress update."),
+            url="https://linear.app/acme/issue/ENG-1#comment-marked",
+            created_at="2026-06-07T08:30:00Z",
+            updated_at="2026-06-07T08:30:00Z",
+        )
+
+        self.assertTrue(is_orchestrator_linear_comment(status.body))
+        self.assertTrue(is_orchestrator_linear_comment(marked.body))
+        self.assertEqual(actionable_linear_feedback([status, marked, human], set()), [human])
+        self.assertEqual(actionable_linear_feedback([human], {human.key}), [])
+
+    def test_linear_comment_filter_keeps_human_package_mentions(self) -> None:
+        comment = LinearCommentFeedback(
+            key="linear-comment:human:2026-06-07T09:00:00Z",
+            id="human",
+            author="reviewer",
+            body="Please update the linear-codex-orchestrator package docs.",
+            url="https://linear.app/acme/issue/ENG-1#comment-human",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+        marked = LinearCommentFeedback(
+            key="linear-comment:marked:2026-06-07T09:01:00Z",
+            id="marked",
+            author="codex",
+            body="linear-codex-orchestrator\n\nCodex status.",
+            url="https://linear.app/acme/issue/ENG-1#comment-marked",
+            created_at="2026-06-07T09:01:00Z",
+            updated_at="2026-06-07T09:01:00Z",
+        )
+
+        self.assertFalse(is_orchestrator_linear_comment(comment.body))
+        self.assertTrue(is_orchestrator_linear_comment(marked.body))
+        self.assertEqual(actionable_linear_feedback([comment, marked], set()), [comment])
+
+    def test_linear_comment_filter_keeps_human_status_like_feedback(self) -> None:
+        addressed = LinearCommentFeedback(
+            key="linear-comment:addressed:2026-06-07T09:00:00Z",
+            id="addressed",
+            author="reviewer",
+            body="Codex addressed the wrong field; please update the retry path instead.",
+            url="https://linear.app/acme/issue/ENG-1#comment-addressed",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+        reviewer = LinearCommentFeedback(
+            key="linear-comment:reviewer:2026-06-07T09:01:00Z",
+            id="reviewer",
+            author="reviewer",
+            body="Codex reviewer missed the error branch; add a regression test.",
+            url="https://linear.app/acme/issue/ENG-1#comment-reviewer",
+            created_at="2026-06-07T09:01:00Z",
+            updated_at="2026-06-07T09:01:00Z",
+        )
+        legacy_status = LinearCommentFeedback(
+            key="linear-comment:legacy:2026-06-07T08:00:00Z",
+            id="legacy",
+            author="codex",
+            body="Codex addressed new Linear feedback.\n\nDone.",
+            url="https://linear.app/acme/issue/ENG-1#comment-legacy",
+            created_at="2026-06-07T08:00:00Z",
+            updated_at="2026-06-07T08:00:00Z",
+        )
+
+        self.assertFalse(is_orchestrator_linear_comment(addressed.body))
+        self.assertFalse(is_orchestrator_linear_comment(reviewer.body))
+        self.assertTrue(is_orchestrator_linear_comment(legacy_status.body))
+        self.assertEqual(
+            actionable_linear_feedback([addressed, reviewer, legacy_status], set()),
+            [addressed, reviewer],
+        )
+
+    def test_linear_comment_from_node_uses_id_and_updated_timestamp_key(self) -> None:
+        comment = linear_comment_from_node(
+            {
+                "id": "comment-id",
+                "body": "Looks good except one test.",
+                "url": "https://linear.app/acme/issue/ENG-1#comment-id",
+                "createdAt": "2026-06-07T08:00:00Z",
+                "updatedAt": "2026-06-07T09:00:00Z",
+                "user": {"displayName": "Reviewer", "name": "reviewer"},
+            },
+            "https://linear.app/acme/issue/ENG-1",
+        )
+
+        self.assertEqual(comment.key, "linear-comment:comment-id:2026-06-07T09:00:00Z")
+        self.assertEqual(comment.author, "Reviewer")
+
+    def test_seed_linear_feedback_state_records_existing_comments(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        human = LinearCommentFeedback(
+            key="linear-comment:human:2026-06-07T09:00:00Z",
+            id="human",
+            author="reviewer",
+            body="Clarification from before review.",
+            url="https://linear.app/acme/issue/ENG-1#comment-human",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+        orchestrator_comment = LinearCommentFeedback(
+            key="linear-comment:codex:2026-06-07T10:00:00Z",
+            id="codex",
+            author="codex",
+            body=mark_linear_orchestrator_comment("Codex status."),
+            url="https://linear.app/acme/issue/ENG-1#comment-codex",
+            created_at="2026-06-07T10:00:00Z",
+            updated_at="2026-06-07T10:00:00Z",
+        )
+
+        class FakeLinear:
+            async def issue_comments(self, _issue: object) -> list[LinearCommentFeedback]:
+                return [human, orchestrator_comment]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workspace = WorkspaceConfig(
+                path=tmp_path / "workspace",
+                repos={"web": RepoConfig("acme/web", tmp_path / "workspace" / "web", "develop")},
+            )
+            lock_dir = tmp_path / "locks"
+            status = tmp_path / "status.json"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={"ENG": workspace}, lock_dir=lock_dir),
+                linear=FakeLinear(),
+                github=object(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                asyncio.run(orchestrator.seed_linear_feedback_state(issue))
+
+            processed = read_processed_feedback(linear_feedback_state(lock_dir, issue.identifier))
+
+        self.assertEqual(processed, {human.key})
+
+    def test_pr_completion_continues_when_linear_feedback_seed_fails(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": [{"name": "agent-running"}]},
+            }
+        )
+        run_state = IssueRunState(
+            issue_id="abc",
+            issue_identifier="ENG-1",
+            workspace_path="/tmp/workspace",
+            branch="codex/eng-1-ship-it",
+            stage="optimized",
+            plan="saved plan",
+            implementation_summary="saved summary",
+        )
+
+        class FakeLinear:
+            def __init__(self) -> None:
+                self.moves: list[tuple[str, str]] = []
+                self.removed_labels: list[tuple[str, str]] = []
+
+            async def issue_context(self, _issue: object) -> str:
+                return "context"
+
+            async def comment(self, _issue_id: str, _body: str) -> None:
+                return None
+
+            async def attach_pr(self, _issue_id: str, _url: str) -> None:
+                return None
+
+            async def move_issue(self, issue_id: str, status_name: str) -> None:
+                self.moves.append((issue_id, status_name))
+
+            async def remove_label(self, issue_id: str, label_name: str) -> None:
+                self.removed_labels.append((issue_id, label_name))
+
+        class FakeGitHub:
+            async def create_or_update_pr(
+                self,
+                repo: str,
+                _branch: str,
+                _base: str,
+                title: str,
+                _body: str,
+            ) -> PullRequest:
+                return PullRequest(12, f"https://github.com/{repo}/pull/12", title)
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        linear = FakeLinear()
+        orchestrator = Orchestrator(
+            Settings(workspace_map={"ENG": workspace}),
+            linear=linear,
+            github=FakeGitHub(),
+        )
+        orchestrator.changed_repos = (  # type: ignore[method-assign]
+            lambda _workspace: workspace.repos
+        )
+
+        async def fake_review(*_args: object) -> ReviewResult:
+            return ReviewResult(True, "Review passed", "tests passed")
+
+        orchestrator._review = fake_review  # type: ignore[method-assign]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            status_file = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status_file):
+                with patch.object(orchestrator, "checkout_existing_branch"):
+                    with patch.object(
+                        orchestrator,
+                        "seed_linear_feedback_state",
+                        side_effect=RuntimeError("Linear outage"),
+                    ):
+                        with patch(
+                            "linear_codex_orchestrator.orchestrator.read_issue_run_state",
+                            return_value=run_state,
+                        ):
+                            with patch(
+                                "linear_codex_orchestrator.orchestrator.write_issue_run_state"
+                            ):
+                                with patch(
+                                    "linear_codex_orchestrator.orchestrator.clear_issue_run_state"
+                                ):
+                                    with patch(
+                                        "linear_codex_orchestrator.orchestrator.has_changes",
+                                        return_value=False,
+                                    ):
+                                        with patch(
+                                            "linear_codex_orchestrator.orchestrator.push_branch"
+                                        ):
+                                            asyncio.run(
+                                                orchestrator._process_locked_issue(
+                                                    issue,
+                                                    workspace,
+                                                    resume=True,
+                                                )
+                                            )
+
+        self.assertEqual(linear.moves, [("abc", "In Review")])
+        self.assertEqual(linear.removed_labels, [("abc", "agent-running")])
+
+    def test_process_linear_feedback_uses_workspace_lock(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+
+        class FakeLinear:
+            calls = 0
+
+            async def issue_comments(self, _issue: object) -> list[LinearCommentFeedback]:
+                self.calls += 1
+                return []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workspace = WorkspaceConfig(
+                path=tmp_path / "workspace",
+                repos={"web": RepoConfig("acme/web", tmp_path / "workspace" / "web", "develop")},
+            )
+            lock_dir = tmp_path / "locks"
+            linear = FakeLinear()
+            orchestrator = Orchestrator(
+                Settings(workspace_map={"ENG": workspace}, lock_dir=lock_dir),
+                linear=linear,
+                github=object(),
+            )
+            with lock_for_repo(lock_dir, f"{issue.team_key}:{workspace.path}"):
+                with patch.object(orchestrator, "linear_feedback_branch_available", return_value=True):
+                    asyncio.run(orchestrator.process_linear_feedback(issue))
+
+        self.assertEqual(linear.calls, 0)
+
+    def test_linear_feedback_candidates_only_queries_in_review_issues(self) -> None:
+        in_review_issue = parse_linear_issue(
+            {
+                "id": "review",
+                "identifier": "ENG-1",
+                "title": "Review me",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+
+        class FakeLinear:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str | None, int, tuple[str, ...]]] = []
+
+            async def ready_issues(
+                self,
+                status: str,
+                label: str | None,
+                limit: int,
+                excluded_labels: tuple[str, ...],
+                _team_keys: tuple[str, ...],
+            ) -> list[LinearIssue]:
+                self.calls.append((status, label, limit, excluded_labels))
+                return [in_review_issue]
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        linear = FakeLinear()
+        orchestrator = Orchestrator(
+            Settings(workspace_map={"ENG": workspace}),
+            linear=linear,
+            github=object(),
+        )
+
+        candidates = asyncio.run(orchestrator.linear_feedback_candidates())
+
+        self.assertEqual(candidates, [in_review_issue])
+        self.assertEqual(
+            linear.calls,
+            [("In Review", None, 10, ("agent-running", "agent-blocked"))],
+        )
+
+    def test_run_linear_feedback_once_caps_processed_feedback_passes(self) -> None:
+        issues = [
+            parse_linear_issue(
+                {
+                    "id": f"issue-{index}",
+                    "identifier": f"ENG-{index}",
+                    "title": f"Review me {index}",
+                    "description": "",
+                    "url": f"https://linear.app/acme/issue/ENG-{index}",
+                    "state": {"name": "In Review"},
+                    "team": {"key": "ENG", "name": "Engineering"},
+                    "labels": {"nodes": []},
+                }
+            )
+            for index in range(1, 4)
+        ]
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        orchestrator = Orchestrator(
+            Settings(workspace_map={"ENG": workspace}, max_issues_per_tick=1),
+            linear=object(),
+            github=object(),
+        )
+        calls: list[str] = []
+
+        async def fake_candidates() -> list[LinearIssue]:
+            return issues
+
+        async def fake_process(issue: LinearIssue) -> bool:
+            calls.append(issue.identifier)
+            return issue.identifier != "ENG-1"
+
+        orchestrator.linear_feedback_candidates = fake_candidates  # type: ignore[method-assign]
+        orchestrator.process_linear_feedback = fake_process  # type: ignore[method-assign]
+
+        asyncio.run(orchestrator.run_linear_feedback_once())
+
+        self.assertEqual(calls, ["ENG-1", "ENG-2"])
+
+    def test_update_issue_linear_feedback_status_populates_empty_issue_metadata(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+                "project": {"name": "Project X", "url": "https://linear.app/acme/project/x"},
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            status.write_text('{"issues": {"ENG-1": {}}}\n', encoding="utf-8")
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                update_issue_linear_feedback_status(issue, "Linear feedback found", 1)
+                payload = read_status()
+
+        current = payload["issues"]["ENG-1"]
+        self.assertEqual(current["identifier"], "ENG-1")
+        self.assertEqual(current["title"], "Ship it")
+        self.assertEqual(current["url"], "https://linear.app/acme/issue/ENG-1")
+        self.assertEqual(current["team"], "ENG")
+        self.assertEqual(current["project"], "Project X")
+        self.assertEqual(current["project_url"], "https://linear.app/acme/project/x")
+        self.assertEqual(current["linear_feedback"], "Linear feedback found (1 comment)")
+
     def test_pull_request_number_is_parsed_from_created_pr_url(self) -> None:
         self.assertEqual(pull_request_number_from_url("https://github.com/acme/web/pull/42"), 42)
         self.assertEqual(pull_request_number_from_url("https://github.com/acme/web/pull/42#discussion"), 42)
@@ -535,6 +1071,15 @@ class CoreTests(unittest.TestCase):
             path = Path(tmp) / "state.json"
             self.assertEqual(read_processed_feedback(path), set())
             write_processed_feedback(path, {"b", "a"})
+            self.assertEqual(read_processed_feedback(path), {"a", "b"})
+
+    def test_processed_feedback_state_ignores_invalid_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text('{"processed": "not-a-list"}', encoding="utf-8")
+            self.assertEqual(read_processed_feedback(path), set())
+
+            path.write_text('{"processed": ["a", 2, "b"]}', encoding="utf-8")
             self.assertEqual(read_processed_feedback(path), {"a", "b"})
 
     def test_codex_log_path_is_stable_and_sanitized(self) -> None:
@@ -1060,6 +1605,496 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(pr_status["codex_approved"])
         self.assertEqual(pr_status["codex_approved_pr"], pr.url)
         self.assertNotIn("issue", pr_status)
+
+    def test_process_linear_feedback_dry_run_detects_without_persisting(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        feedback = LinearCommentFeedback(
+            key="linear-comment:c1:2026-06-07T09:00:00Z",
+            id="c1",
+            author="reviewer",
+            body="Please add an edge-case test.",
+            url="https://linear.app/acme/issue/ENG-1#comment-c1",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+
+        class FakeLinear:
+            async def issue_comments(self, _issue: object) -> list[LinearCommentFeedback]:
+                return [feedback]
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status = tmp_path / "status.json"
+            settings = Settings(workspace_map={"ENG": workspace}, lock_dir=tmp_path / "locks", dry_run=True)
+            orchestrator = Orchestrator(settings, linear=FakeLinear(), github=object())
+            state_path = linear_feedback_state(settings.lock_dir, "ENG-1")
+            write_processed_feedback(state_path, set())
+            with patch.object(orchestrator, "linear_feedback_branch_available", return_value=True):
+                with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                    asyncio.run(orchestrator.process_linear_feedback(issue))
+                    payload = read_status()
+
+            self.assertEqual(read_processed_feedback(state_path), set())
+
+        self.assertEqual(payload["issues"]["ENG-1"]["linear_feedback"], "Linear feedback found (1 comment)")
+        self.assertEqual(payload["issues"]["ENG-1"]["linear_feedback_count"], 1)
+
+    def test_process_linear_feedback_skips_dirty_workspace_without_persisting(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        feedback = LinearCommentFeedback(
+            key="linear-comment:c1:2026-06-07T09:00:00Z",
+            id="c1",
+            author="reviewer",
+            body="Please add an edge-case test.",
+            url="https://linear.app/acme/issue/ENG-1#comment-c1",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+
+        class FakeLinear:
+            def __init__(self) -> None:
+                self.context_calls = 0
+
+            async def issue_comments(self, _issue: object) -> list[LinearCommentFeedback]:
+                return [feedback]
+
+            async def issue_context(self, _issue: object) -> str:
+                self.context_calls += 1
+                return "# ENG-1: Ship it"
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        linear = FakeLinear()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status = tmp_path / "status.json"
+            settings = Settings(workspace_map={"ENG": workspace}, lock_dir=tmp_path / "locks")
+            orchestrator = Orchestrator(settings, linear=linear, github=object())
+            state_path = linear_feedback_state(settings.lock_dir, "ENG-1")
+            write_processed_feedback(state_path, set())
+            with patch.object(orchestrator, "linear_feedback_branch_available", return_value=True):
+                with patch.object(orchestrator, "dirty_workspace_repos", return_value=["web"]):
+                    with patch.object(orchestrator, "checkout_existing_branch_from_origin") as checkout:
+                        with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                            asyncio.run(orchestrator.process_linear_feedback(issue))
+                            payload = read_status()
+
+            self.assertEqual(read_processed_feedback(state_path), set())
+
+        checkout.assert_not_called()
+        self.assertEqual(linear.context_calls, 0)
+        self.assertEqual(payload["issues"]["ENG-1"]["linear_feedback"], "Workspace dirty (1 comment)")
+
+    def test_process_linear_feedback_normal_flow_commits_updates_pr_and_persists(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        feedback = LinearCommentFeedback(
+            key="linear-comment:c1:2026-06-07T09:00:00Z",
+            id="c1",
+            author="reviewer",
+            body="Please add an edge-case test.",
+            url="https://linear.app/acme/issue/ENG-1#comment-c1",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+
+        class FakeLinear:
+            def __init__(self) -> None:
+                self.comments: list[str] = []
+
+            async def issue_comments(self, _issue: object) -> list[LinearCommentFeedback]:
+                return [feedback]
+
+            async def issue_context(self, _issue: object) -> str:
+                return "# ENG-1: Ship it"
+
+            async def comment(self, _issue_id: str, body: str) -> None:
+                self.comments.append(body)
+
+        class FakeGitHub:
+            async def create_or_update_pr(
+                self,
+                repo: str,
+                _branch: str,
+                _base: str,
+                title: str,
+                _body: str,
+            ) -> PullRequest:
+                return PullRequest(12, f"https://github.com/{repo}/pull/12", title)
+
+        class TestOrchestrator(Orchestrator):
+            def linear_feedback_branch_available(self, _workspace: WorkspaceConfig, _branch: str) -> bool:
+                return True
+
+            def dirty_workspace_repos(self, _workspace: WorkspaceConfig) -> list[str]:
+                return []
+
+            def checkout_existing_branch_from_origin(
+                self,
+                _workspace: WorkspaceConfig,
+                _branch: str,
+            ) -> None:
+                return None
+
+            def changed_repos(
+                self,
+                workspace_arg: WorkspaceConfig,
+            ) -> dict[str, RepoConfig]:
+                return workspace_arg.repos
+
+            async def _fix_linear_feedback(
+                self,
+                *_args: object,
+                **_kwargs: object,
+            ) -> str:
+                return "Addressed Linear feedback."
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        linear = FakeLinear()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status = tmp_path / "status.json"
+            settings = Settings(workspace_map={"ENG": workspace}, lock_dir=tmp_path / "locks")
+            orchestrator = TestOrchestrator(settings, linear=linear, github=FakeGitHub())
+            write_processed_feedback(linear_feedback_state(settings.lock_dir, "ENG-1"), set())
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                pr = OpenPullRequest(
+                    repo="acme/web",
+                    number=12,
+                    url="https://github.com/acme/web/pull/12",
+                    title="ENG-1: Ship it",
+                    head_branch="codex/eng-1-ship-it",
+                    base_branch="develop",
+                )
+                approval = PullRequestApproval(
+                    key="review:1:2026-06-07T08:00:00Z",
+                    author="codex",
+                    submitted_at="2026-06-07T08:00:00Z",
+                    url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+                    body="👍",
+                    commit_id="abc123",
+                )
+                update_issue_codex_approval("ENG-1", pr, approval)
+                update_pr_status(pr, "Codex approved", issue="ENG-1", codex_approval=approval)
+                with patch("linear_codex_orchestrator.orchestrator.has_changes", return_value=True):
+                    with patch("linear_codex_orchestrator.orchestrator.commit_all") as commit:
+                        with patch("linear_codex_orchestrator.orchestrator.push_branch") as push:
+                            with patch(
+                                "linear_codex_orchestrator.orchestrator.run_git",
+                                return_value="file.py | 1 +",
+                            ):
+                                asyncio.run(orchestrator.process_linear_feedback(issue))
+                                payload = read_status()
+
+            state_path = linear_feedback_state(settings.lock_dir, "ENG-1")
+            self.assertEqual(read_processed_feedback(state_path), {feedback.key})
+
+        commit.assert_called_once()
+        push.assert_called_once()
+        self.assertIn("Updated for Linear feedback", payload["prs"]["acme/web#12"]["status"])
+        self.assertNotIn("codex_approved", payload["prs"]["acme/web#12"])
+        self.assertNotIn("codex_approved", payload["issues"]["ENG-1"])
+        self.assertEqual(payload["issues"]["ENG-1"]["linear_feedback"], "Linear feedback addressed (1 comment)")
+        self.assertTrue(linear.comments)
+        self.assertIn("linear-codex-orchestrator", linear.comments[0])
+
+    def test_process_linear_feedback_pushes_committed_feedback_changes(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        feedback = LinearCommentFeedback(
+            key="linear-comment:c1:2026-06-07T09:00:00Z",
+            id="c1",
+            author="reviewer",
+            body="Please add an edge-case test.",
+            url="https://linear.app/acme/issue/ENG-1#comment-c1",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+
+        class FakeLinear:
+            async def issue_comments(self, _issue: object) -> list[LinearCommentFeedback]:
+                return [feedback]
+
+            async def issue_context(self, _issue: object) -> str:
+                return "# ENG-1: Ship it"
+
+            async def comment(self, _issue_id: str, _body: str) -> None:
+                return None
+
+        class FakeGitHub:
+            async def create_or_update_pr(
+                self,
+                repo: str,
+                _branch: str,
+                _base: str,
+                title: str,
+                _body: str,
+            ) -> PullRequest:
+                return PullRequest(12, f"https://github.com/{repo}/pull/12", title)
+
+        class TestOrchestrator(Orchestrator):
+            def linear_feedback_branch_available(self, _workspace: WorkspaceConfig, _branch: str) -> bool:
+                return True
+
+            def dirty_workspace_repos(self, _workspace: WorkspaceConfig) -> list[str]:
+                return []
+
+            def checkout_existing_branch_from_origin(self, _workspace: WorkspaceConfig, _branch: str) -> None:
+                return None
+
+            def changed_repos_since_heads(
+                self,
+                workspace_arg: WorkspaceConfig,
+                _before_heads: dict[str, str],
+            ) -> dict[str, RepoConfig]:
+                return workspace_arg.repos
+
+            async def _fix_linear_feedback(self, *_args: object, **_kwargs: object) -> str:
+                return "Committed Linear feedback changes."
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            settings = Settings(workspace_map={"ENG": workspace}, lock_dir=tmp_path / "locks")
+            orchestrator = TestOrchestrator(settings, linear=FakeLinear(), github=FakeGitHub())
+            write_processed_feedback(linear_feedback_state(settings.lock_dir, "ENG-1"), set())
+            with patch(
+                "linear_codex_orchestrator.orchestrator.status_path",
+                return_value=tmp_path / "status.json",
+            ):
+                with patch("linear_codex_orchestrator.orchestrator.has_changes", return_value=False):
+                    with patch("linear_codex_orchestrator.orchestrator.commit_all") as commit:
+                        with patch("linear_codex_orchestrator.orchestrator.push_branch") as push:
+                            with patch(
+                                "linear_codex_orchestrator.orchestrator.run_git",
+                                return_value="file.py | 1 +",
+                            ):
+                                asyncio.run(orchestrator.process_linear_feedback(issue))
+
+        commit.assert_not_called()
+        push.assert_called_once()
+
+    def test_process_linear_feedback_noops_with_unchanged_branch_head(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        feedback = LinearCommentFeedback(
+            key="linear-comment:c1:2026-06-07T09:00:00Z",
+            id="c1",
+            author="reviewer",
+            body="Please verify this is already covered.",
+            url="https://linear.app/acme/issue/ENG-1#comment-c1",
+            created_at="2026-06-07T09:00:00Z",
+            updated_at="2026-06-07T09:00:00Z",
+        )
+
+        class FakeLinear:
+            def __init__(self) -> None:
+                self.comments: list[str] = []
+
+            async def issue_comments(self, _issue: object) -> list[LinearCommentFeedback]:
+                return [feedback]
+
+            async def issue_context(self, _issue: object) -> str:
+                return "# ENG-1: Ship it"
+
+            async def comment(self, _issue_id: str, body: str) -> None:
+                self.comments.append(body)
+
+        class FakeGitHub:
+            async def create_or_update_pr(self, *_args: object, **_kwargs: object) -> PullRequest:
+                raise AssertionError("PR should not be updated for an unchanged feedback pass")
+
+        class TestOrchestrator(Orchestrator):
+            def linear_feedback_branch_available(
+                self,
+                _workspace: WorkspaceConfig,
+                _branch: str,
+            ) -> bool:
+                return True
+
+            def dirty_workspace_repos(self, _workspace: WorkspaceConfig) -> list[str]:
+                return []
+
+            def checkout_existing_branch_from_origin(
+                self,
+                _workspace: WorkspaceConfig,
+                _branch: str,
+            ) -> None:
+                return None
+
+            def repo_heads(self, _workspace: WorkspaceConfig) -> dict[str, str]:
+                return {"web": "abc123"}
+
+            def changed_repos_since_heads(
+                self,
+                _workspace: WorkspaceConfig,
+                _before_heads: dict[str, str],
+            ) -> dict[str, RepoConfig]:
+                return {}
+
+            async def _fix_linear_feedback(self, *_args: object, **_kwargs: object) -> str:
+                return "No code changes were needed."
+
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        linear = FakeLinear()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status = tmp_path / "status.json"
+            settings = Settings(workspace_map={"ENG": workspace}, lock_dir=tmp_path / "locks")
+            orchestrator = TestOrchestrator(settings, linear=linear, github=FakeGitHub())
+            write_processed_feedback(linear_feedback_state(settings.lock_dir, "ENG-1"), set())
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                with patch(
+                    "linear_codex_orchestrator.orchestrator.has_commits_since_base",
+                    return_value=True,
+                ):
+                    with patch("linear_codex_orchestrator.orchestrator.commit_all") as commit:
+                        with patch("linear_codex_orchestrator.orchestrator.push_branch") as push:
+                            processed = asyncio.run(orchestrator.process_linear_feedback(issue))
+                            payload = read_status()
+
+        self.assertTrue(processed)
+        commit.assert_not_called()
+        push.assert_not_called()
+        self.assertEqual(
+            payload["issues"]["ENG-1"]["linear_feedback"],
+            "Checked Linear feedback (1 comment)",
+        )
+        self.assertTrue(linear.comments)
+        self.assertIn("No code changes were needed", linear.comments[0])
+
+    def test_linear_feedback_branch_available_accepts_origin_branch(self) -> None:
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={
+                "web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop"),
+                "api": RepoConfig("acme/api", Path("/tmp/workspace/api"), "develop"),
+            },
+        )
+        orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}))
+        branch = "codex/eng-1-ship-it"
+
+        def fake_branch_exists(path: Path, branch_arg: str) -> bool:
+            self.assertEqual(branch_arg, branch)
+            return path == workspace.repos["api"].path
+
+        def fake_remote_branch_exists(path: Path, branch_arg: str) -> bool:
+            self.assertEqual(branch_arg, branch)
+            return path == workspace.repos["web"].path
+
+        with patch("linear_codex_orchestrator.orchestrator.branch_exists", fake_branch_exists):
+            with patch("linear_codex_orchestrator.orchestrator.remote_branch_exists", fake_remote_branch_exists):
+                self.assertTrue(orchestrator.linear_feedback_branch_available(workspace, branch))
+
+    def test_linear_feedback_branch_prefers_stored_pr_branch_when_issue_title_changed(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Edited title",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        workspace = WorkspaceConfig(
+            path=Path("/tmp/workspace"),
+            repos={"web": RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")},
+        )
+        original_branch = "codex/eng-1-original-title"
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Original title",
+            head_branch=original_branch,
+            base_branch="develop",
+        )
+        orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                update_pr_status(
+                    pr,
+                    "Ready for review",
+                    issue="ENG-1",
+                    repo_key="web",
+                    repo_path=workspace.repos["web"].path,
+                )
+                with patch.object(orchestrator, "linear_feedback_branch_available", return_value=True):
+                    branch = orchestrator.linear_feedback_branch(issue, workspace)
+
+        self.assertEqual(branch, original_branch)
 
     def test_issue_identifier_prefers_standard_ticket_pattern(self) -> None:
         self.assertEqual(parse_issue_identifier("ENG-123: Ship it"), "ENG-123")
@@ -1929,6 +2964,55 @@ class CoreTests(unittest.TestCase):
         self.assertIn("Do not read local files", calls[0][0])
         self.assertFalse(calls[0][1]["show_output"])
 
+    def test_issue_comments_runs_quietly_and_returns_chronological_comments(self) -> None:
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Context",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Progress"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def fake_run_codex(prompt: str, *_args: object, **kwargs: object) -> str:
+            calls.append((prompt, kwargs))
+            return json.dumps(
+                {
+                    "comments": [
+                        {
+                            "id": "late",
+                            "author": "Reviewer",
+                            "body": "Second",
+                            "url": "",
+                            "created_at": "2026-06-07T09:00:00Z",
+                            "updated_at": "2026-06-07T09:00:00Z",
+                        },
+                        {
+                            "id": "early",
+                            "author": "Reviewer",
+                            "body": "First",
+                            "url": "",
+                            "created_at": "2026-06-07T08:00:00Z",
+                            "updated_at": "",
+                        },
+                    ]
+                }
+            )
+
+        with patch("linear_codex_orchestrator.local_linear_client.run_codex", fake_run_codex):
+            comments = asyncio.run(LocalLinearClient(Path("/tmp/workspace")).issue_comments(issue))
+
+        self.assertEqual([comment.id for comment in comments], ["early", "late"])
+        self.assertEqual(comments[0].key, "linear-comment:early:2026-06-07T08:00:00Z")
+        self.assertIn("Do not mutate Linear", calls[0][0])
+        self.assertEqual(calls[0][1]["output_schema"]["required"], ["comments"])
+        self.assertFalse(calls[0][1]["show_output"])
+
     def test_process_issue_skips_unmapped_team(self) -> None:
         issue = parse_linear_issue(
             {
@@ -2018,7 +3102,13 @@ class CoreTests(unittest.TestCase):
         orchestrator.process_issue = fake_process  # type: ignore[method-assign]
         asyncio.run(orchestrator.run_once())
 
-        self.assertEqual(linear.calls, [("In Progress", "agent-running")])
+        self.assertEqual(
+            linear.calls,
+            [
+                ("In Review", None),
+                ("In Progress", "agent-running"),
+            ],
+        )
         self.assertEqual(seen, [("ENG-1", True)])
 
     def test_run_pr_feedback_once_archives_merged_pr_statuses(self) -> None:
@@ -2121,6 +3211,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(
             orchestrator.linear.calls,
             [
+                ("In Review", None, ("agent-running", "agent-blocked")),
                 ("In Progress", "agent-running", ("agent-blocked",)),
                 ("In Progress", None, ("agent-running", "agent-blocked")),
             ],
@@ -2507,6 +3598,126 @@ class CoreTests(unittest.TestCase):
                 ("checkout", branch),
             ],
         )
+
+    def test_linear_feedback_refreshes_existing_branch_from_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_path = Path(tmp)
+            branch = "codex/eng-1-review-me"
+            run_commands: list[tuple[str, ...]] = []
+
+            def fake_run_git(path: Path, *args: str) -> str:
+                self.assertEqual(path, repo_path)
+                run_commands.append(args)
+                if args in {
+                    ("fetch", "origin", branch),
+                    ("checkout", "-B", branch, f"origin/{branch}"),
+                }:
+                    return ""
+                raise AssertionError(f"unexpected git command: {args}")
+
+            workspace = WorkspaceConfig(
+                path=repo_path,
+                repos={"web": RepoConfig("acme/web", repo_path, "develop")},
+            )
+            orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}))
+            with patch("linear_codex_orchestrator.orchestrator.remote_branch_exists", return_value=True):
+                with patch("linear_codex_orchestrator.orchestrator.run_git", fake_run_git):
+                    orchestrator.checkout_existing_branch_from_origin(workspace, branch)
+
+        self.assertEqual(
+            run_commands,
+            [
+                ("fetch", "origin", branch),
+                ("checkout", "-B", branch, f"origin/{branch}"),
+            ],
+        )
+
+    def test_linear_feedback_keeps_local_branch_when_origin_branch_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            changed_repo = tmp_path / "changed"
+            untouched_repo = tmp_path / "untouched"
+            branch = "codex/eng-1-review-me"
+            run_commands: list[tuple[Path, tuple[str, ...]]] = []
+
+            def fake_remote_branch_exists(path: Path, branch_arg: str) -> bool:
+                self.assertEqual(branch_arg, branch)
+                return path == changed_repo
+
+            def fake_branch_exists(path: Path, branch_arg: str) -> bool:
+                self.assertEqual(branch_arg, branch)
+                return path == untouched_repo
+
+            def fake_run_git(path: Path, *args: str) -> str:
+                run_commands.append((path, args))
+                if path == changed_repo and args in {
+                    ("fetch", "origin", branch),
+                    ("checkout", "-B", branch, f"origin/{branch}"),
+                }:
+                    return ""
+                if path == untouched_repo and args == ("checkout", branch):
+                    return ""
+                raise AssertionError(f"unexpected git command: {path} {args}")
+
+            workspace = WorkspaceConfig(
+                path=tmp_path,
+                repos={
+                    "changed": RepoConfig("acme/changed", changed_repo, "develop"),
+                    "untouched": RepoConfig("acme/untouched", untouched_repo, "develop"),
+                },
+            )
+            orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}))
+            with patch("linear_codex_orchestrator.orchestrator.remote_branch_exists", fake_remote_branch_exists):
+                with patch("linear_codex_orchestrator.orchestrator.branch_exists", fake_branch_exists):
+                    with patch("linear_codex_orchestrator.git_ops.run_git", fake_run_git):
+                        with patch("linear_codex_orchestrator.orchestrator.run_git", fake_run_git):
+                            orchestrator.checkout_existing_branch_from_origin(workspace, branch)
+
+        self.assertEqual(
+            run_commands,
+            [
+                (changed_repo, ("fetch", "origin", branch)),
+                (changed_repo, ("checkout", "-B", branch, f"origin/{branch}")),
+                (untouched_repo, ("checkout", branch)),
+            ],
+        )
+
+    def test_linear_feedback_recreates_missing_branch_from_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_path = Path(tmp)
+            branch = "codex/eng-1-review-me"
+            ensured: list[tuple[Path, str, str]] = []
+
+            workspace = WorkspaceConfig(
+                path=repo_path,
+                repos={"web": RepoConfig("acme/web", repo_path, "develop")},
+            )
+            orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}))
+            with patch("linear_codex_orchestrator.orchestrator.remote_branch_exists", return_value=False):
+                with patch("linear_codex_orchestrator.orchestrator.branch_exists", return_value=False):
+                    with patch(
+                        "linear_codex_orchestrator.orchestrator.ensure_branch",
+                        lambda *args: ensured.append(args),
+                    ):
+                        orchestrator.checkout_existing_branch_from_origin(workspace, branch)
+
+        self.assertEqual(ensured, [(repo_path, "develop", branch)])
+
+    def test_linear_feedback_reports_recreate_failure_for_missing_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_path = Path(tmp)
+            branch = "codex/eng-1-review-me"
+
+            workspace = WorkspaceConfig(
+                path=repo_path,
+                repos={"web": RepoConfig("acme/web", repo_path, "develop")},
+            )
+            orchestrator = Orchestrator(Settings(workspace_map={"ENG": workspace}))
+            with patch("linear_codex_orchestrator.orchestrator.remote_branch_exists", return_value=False):
+                with patch("linear_codex_orchestrator.orchestrator.branch_exists", return_value=False):
+                    with patch("linear_codex_orchestrator.orchestrator.ensure_branch", side_effect=RuntimeError):
+                        with self.assertRaisesRegex(RuntimeError, "Cannot refresh branch"):
+                            orchestrator.checkout_existing_branch_from_origin(workspace, branch)
 
     def test_resume_reports_checkout_failure_separately_from_missing_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -89,6 +89,31 @@ TEAMS_SCHEMA = {
 }
 
 
+LINEAR_COMMENTS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "comments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": "string"},
+                    "author": {"type": "string"},
+                    "body": {"type": "string"},
+                    "url": {"type": "string"},
+                    "created_at": {"type": "string"},
+                    "updated_at": {"type": "string"},
+                },
+                "required": ["id", "author", "body", "url", "created_at", "updated_at"],
+            },
+        }
+    },
+    "required": ["comments"],
+}
+
+
 def run_codex(
     prompt: str,
     cwd: Path,
@@ -209,7 +234,7 @@ def _run_process(
         while True:
             if time.monotonic() > deadline:
                 process.kill()
-                returncode = process.wait()
+                process.wait()
                 stdout = "".join(chunks)
                 raise RuntimeError(
                     f"codex exec timed out after {timeout_seconds}s\n\n{strip_ansi(stdout).strip()}"

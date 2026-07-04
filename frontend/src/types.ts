@@ -16,6 +16,9 @@ export type IssueStatus = {
   prs?: string;
   pr_feedback?: string;
   pr_feedback_updated_at?: string;
+  linear_feedback?: string;
+  linear_feedback_count?: number;
+  linear_feedback_updated_at?: string;
   status?: string;
   updated_at?: string;
   codex_approved?: boolean;

@@ -55,6 +55,35 @@ class PullRequestFeedback:
 
 
 @dataclass(frozen=True)
+class LinearCommentFeedback:
+    key: str
+    id: str
+    author: str
+    body: str
+    url: str
+    created_at: str
+    updated_at: str
+
+
+LINEAR_ORCHESTRATOR_HTML_MARKER = "<!-- linear-codex-orchestrator -->"
+LINEAR_ORCHESTRATOR_PLAIN_MARKER = "linear-codex-orchestrator"
+LINEAR_ORCHESTRATOR_LEGACY_STATUS_SHAPES = (
+    "Codex started work on `",
+    "Codex plan:\n",
+    "Codex implementation finished.",
+    "Codex optimization pass finished.",
+    "Codex reviewer approved automatic PR creation.",
+    "Codex reviewer did not approve an automatic PR yet.",
+    "Codex addressed reviewer findings.",
+    "Codex addressed new PR feedback.",
+    "Codex addressed new Linear feedback.",
+    "PRs ready for review:\n",
+    "Planner blocked automatic implementation.",
+    "Codex orchestration failed:\n",
+)
+
+
+@dataclass(frozen=True)
 class PullRequestApproval:
     key: str
     author: str
@@ -86,3 +115,34 @@ def parse_linear_issue(node: dict[str, Any]) -> LinearIssue:
         project_name=project.get("name") or node.get("project_name") or "",
         project_url=project.get("url") or node.get("project_url") or "",
     )
+
+
+def mark_linear_orchestrator_comment(body: str) -> str:
+    if has_linear_orchestrator_marker(body):
+        return body
+    return f"{LINEAR_ORCHESTRATOR_HTML_MARKER}\n{LINEAR_ORCHESTRATOR_PLAIN_MARKER}\n\n{body}".strip()
+
+
+def has_linear_orchestrator_marker(body: str) -> bool:
+    if LINEAR_ORCHESTRATOR_HTML_MARKER in body:
+        return True
+    return any(
+        line.strip() == LINEAR_ORCHESTRATOR_PLAIN_MARKER
+        for line in body.splitlines()
+    )
+
+
+def is_orchestrator_linear_comment(body: str) -> bool:
+    stripped = body.strip()
+    if not stripped:
+        return True
+    if has_linear_orchestrator_marker(stripped):
+        return True
+    return any(
+        stripped.startswith(status_shape)
+        for status_shape in LINEAR_ORCHESTRATOR_LEGACY_STATUS_SHAPES
+    )
+
+
+def linear_comment_feedback_key(comment_id: str, updated_at: str) -> str:
+    return f"linear-comment:{comment_id}:{updated_at}"

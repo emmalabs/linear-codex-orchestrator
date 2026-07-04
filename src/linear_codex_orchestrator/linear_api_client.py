@@ -6,7 +6,13 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .models import LinearIssue, LinearTeam
+from .models import (
+    LinearCommentFeedback,
+    LinearIssue,
+    LinearTeam,
+    linear_comment_feedback_key,
+    mark_linear_orchestrator_comment,
+)
 
 
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
@@ -109,6 +115,45 @@ query IssueContext($id: String!) {
         payload = await self._graphql(query, {"id": issue.id})
         return render_issue_context(payload["issue"])
 
+    async def issue_comments(self, issue: LinearIssue) -> list[LinearCommentFeedback]:
+        query = """
+query IssueComments($id: String!, $after: String) {
+  issue(id: $id) {
+    comments(first: 250, after: $after) {
+      nodes {
+        id
+        body
+        url
+        createdAt
+        updatedAt
+        user { name displayName }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+"""
+        nodes: list[dict[str, Any]] = []
+        after: str | None = None
+        while True:
+            payload = await self._graphql(query, {"id": issue.id, "after": after})
+            comments = payload["issue"]["comments"]
+            nodes.extend(comments["nodes"])
+            page_info = comments["pageInfo"]
+            if not page_info["hasNextPage"]:
+                break
+            after = page_info["endCursor"]
+            if not after:
+                break
+        comments = [
+            linear_comment_from_node(node, issue.url)
+            for node in nodes
+        ]
+        return sorted(comments, key=lambda item: item.created_at)
+
     async def move_issue(self, issue_id: str, status_name: str) -> None:
         issue = await self._issue_metadata(issue_id)
         state_id = state_id_by_name(issue, status_name)
@@ -172,7 +217,7 @@ mutation Comment($input: CommentCreateInput!) {
   commentCreate(input: $input) { success }
 }
 """,
-            {"input": {"issueId": issue_id, "body": body}},
+            {"input": {"issueId": issue_id, "body": mark_linear_orchestrator_comment(body)}},
         )
 
     async def attach_pr(self, issue_id: str, pr_url: str) -> None:
@@ -260,6 +305,22 @@ def team_from_node(node: dict[str, Any]) -> LinearTeam:
         id=str(node["id"]),
         key=str(node["key"]).upper(),
         name=str(node["name"]),
+    )
+
+
+def linear_comment_from_node(node: dict[str, Any], issue_url: str) -> LinearCommentFeedback:
+    updated_at = str(node.get("updatedAt") or node.get("createdAt") or "")
+    comment_id = str(node["id"])
+    user = node.get("user") or {}
+    author = user.get("displayName") or user.get("name") or "unknown"
+    return LinearCommentFeedback(
+        key=linear_comment_feedback_key(comment_id, updated_at),
+        id=comment_id,
+        author=str(author),
+        body=node.get("body") or "",
+        url=node.get("url") or f"{issue_url}#comment-{comment_id}",
+        created_at=str(node.get("createdAt") or ""),
+        updated_at=updated_at,
     )
 
 
