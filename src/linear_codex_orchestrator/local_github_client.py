@@ -292,13 +292,18 @@ def codex_approval_reviews(items: list[dict[str, object]]) -> list[PullRequestAp
 
 
 def _run(command: list[str]) -> str:
-    result = subprocess.run(
-        command,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except subprocess.CalledProcessError as exc:
+        output = (exc.stdout or exc.output or "").strip()
+        details = f"\n\nOutput:\n{output}" if output else ""
+        raise RuntimeError(f"Command {command!r} failed with exit code {exc.returncode}.{details}") from exc
     return result.stdout.strip()
 
 

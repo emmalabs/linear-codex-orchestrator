@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ from linear_codex_orchestrator.config import (
 from linear_codex_orchestrator.git_ops import branch_name, has_commits_since_base, run_git
 from linear_codex_orchestrator.local_github_client import (
     LocalGitHubClient,
+    _run,
     codex_approval_reviews,
     is_codex_approval_review,
     parse_gh_api_json,
@@ -960,6 +962,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(pull_request_number_from_url("https://github.com/acme/web/pull/42"), 42)
         self.assertEqual(pull_request_number_from_url("https://github.com/acme/web/pull/42#discussion"), 42)
         self.assertEqual(pull_request_number_from_url("https://github.com/acme/web/compare/main...branch"), 0)
+
+    def test_github_run_error_includes_command_output(self) -> None:
+        def fail_run(*_args: object, **_kwargs: object) -> object:
+            raise subprocess.CalledProcessError(
+                1,
+                ["gh", "pr", "create"],
+                output="a pull request already exists for this branch",
+            )
+
+        with patch("linear_codex_orchestrator.local_github_client.subprocess.run", fail_run):
+            with self.assertRaisesRegex(RuntimeError, "a pull request already exists"):
+                _run(["gh", "pr", "create"])
 
     def test_codex_approval_reviews_require_approved_state_and_thumb(self) -> None:
         approved = {
