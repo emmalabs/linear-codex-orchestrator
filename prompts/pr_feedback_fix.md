@@ -1,4 +1,4 @@
-Address new GitHub PR feedback for `{repo_github}` PR #{pr_number}.
+Address new GitHub PR feedback or failed checks for `{repo_github}` PR #{pr_number}.
 
 Repository: `{repo_key}`
 Local path: `{repo_path}`
@@ -7,14 +7,14 @@ URL: `{pr_url}`
 Head branch: `{head_branch}`
 Base branch: `{base_branch}`
 
-New PR feedback:
+New PR feedback or failed checks:
 
 {feedback}
 
 Instructions:
 
 1. Before making any code changes, inspect the current state of the GitHub Pull Request.
-   - Review the new PR review comments provided above.
+   - Review the new PR review comments or failed check details provided above.
    - Check for any unresolved review threads.
    - Check the status of all GitHub Actions / CI checks for the current HEAD commit.
    - If any required workflow has failed, inspect the workflow logs to determine the root cause.
@@ -23,7 +23,7 @@ Instructions:
 2. Inspect the current branch and the relevant repository code before editing.
 
 3. Address:
-   - The new PR feedback above.
+   - The new PR feedback or failed checks above.
    - Any failing GitHub Actions that are caused by the current branch and can reasonably be fixed as part of this task.
    - Any directly required follow up changes.
 
@@ -43,7 +43,7 @@ Instructions:
 
 Final response:
 
-- Summary of PR feedback addressed.
+- Summary of PR feedback or failed checks addressed.
 - GitHub Actions status:
   - Initial status.
   - Workflows that were failing.

@@ -23,6 +23,7 @@ from linear_codex_orchestrator.local_github_client import (
     LocalGitHubClient,
     _run,
     codex_approval_reviews,
+    failed_check_feedback,
     is_codex_approval_review,
     parse_gh_api_json,
     pull_request_number_from_url,
@@ -478,7 +479,7 @@ class CoreTests(unittest.TestCase):
         self.assertIn("Address new GitHub PR feedback", prompt)
         self.assertIn("Please add a regression test.", prompt)
         self.assertIn("Path: `src/app.py`", prompt)
-        self.assertIn("Do not commit, push, create pull requests, or comment on GitHub", prompt)
+        self.assertIn("Do not commit, push, create pull requests, approve reviews", prompt)
 
     def test_linear_feedback_prompt_loads_markdown_template(self) -> None:
         issue = parse_linear_issue(
@@ -1046,6 +1047,39 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(approvals), 1)
         self.assertEqual(approvals[0].commit_id, "head-sha")
 
+    def test_failed_check_feedback_extracts_failed_check_runs(self) -> None:
+        feedback = failed_check_feedback(
+            [
+                {
+                    "check_runs": [
+                        {
+                            "id": 10,
+                            "name": "test",
+                            "status": "completed",
+                            "conclusion": "failure",
+                            "started_at": "2026-06-07T08:00:00Z",
+                            "completed_at": "2026-06-07T08:02:00Z",
+                            "details_url": "https://github.com/acme/web/actions/runs/10/job/1",
+                        },
+                        {
+                            "id": 11,
+                            "name": "lint",
+                            "status": "completed",
+                            "conclusion": "success",
+                        },
+                    ]
+                }
+            ],
+            repo="acme/web",
+            number=12,
+        )
+
+        self.assertEqual(len(feedback), 1)
+        self.assertEqual(feedback[0].key, "check-run:10:2026-06-07T08:02:00Z:failure")
+        self.assertEqual(feedback[0].kind, "failed GitHub Actions check")
+        self.assertIn("Check run `test` failed", feedback[0].body)
+        self.assertEqual(feedback[0].url, "https://github.com/acme/web/actions/runs/10/job/1")
+
     def test_latest_codex_approval_requires_current_head_commit(self) -> None:
         stale = PullRequestApproval(
             key="review:1:2026-06-07T08:00:00Z",
@@ -1571,6 +1605,89 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(pr_status["status"], "Feedback found")
         self.assertNotIn("codex_approved", pr_status)
         self.assertEqual(pr_status["issue"], "ENG-1")
+
+    def test_process_pr_feedback_treats_failed_actions_as_feedback(self) -> None:
+        pr = OpenPullRequest(
+            repo="acme/web",
+            number=12,
+            url="https://github.com/acme/web/pull/12",
+            title="ENG-1: Ship it",
+            head_branch="codex/eng-1",
+            base_branch="develop",
+            head_sha="new-sha",
+        )
+        issue = parse_linear_issue(
+            {
+                "id": "abc",
+                "identifier": "ENG-1",
+                "title": "Ship it",
+                "description": "",
+                "url": "https://linear.app/acme/issue/ENG-1",
+                "state": {"name": "In Review"},
+                "team": {"key": "ENG", "name": "Engineering"},
+                "labels": {"nodes": []},
+            }
+        )
+        stale_approval = PullRequestApproval(
+            key="review:1:2026-06-07T08:00:00Z",
+            author="codex",
+            submitted_at="2026-06-07T08:00:00Z",
+            url="https://github.com/acme/web/pull/12#pullrequestreview-1",
+            body="👍",
+            commit_id="old-sha",
+        )
+
+        class FakeGitHub:
+            async def pr_feedback(self, _repo: str, _number: int) -> list[PullRequestFeedback]:
+                return []
+
+            async def pr_failed_checks(
+                self,
+                _repo: str,
+                _number: int,
+                _head_sha: str,
+            ) -> list[PullRequestFeedback]:
+                return [
+                    PullRequestFeedback(
+                        key="check-run:10:2026-06-07T08:02:00Z:failure",
+                        kind="failed GitHub Actions check",
+                        author="github-actions",
+                        body="Check run `test` failed.",
+                        url="https://github.com/acme/web/actions/runs/10/job/1",
+                    )
+                ]
+
+            async def pr_codex_approvals(
+                self,
+                _repo: str,
+                _number: int,
+            ) -> list[PullRequestApproval]:
+                return [stale_approval]
+
+        repo = RepoConfig("acme/web", Path("/tmp/workspace/web"), "develop")
+        with tempfile.TemporaryDirectory() as tmp:
+            status = Path(tmp) / "status.json"
+            lock_dir = Path(tmp) / "locks"
+            orchestrator = Orchestrator(
+                Settings(workspace_map={}, lock_dir=lock_dir, dry_run=True),
+                github=FakeGitHub(),
+            )
+            with patch("linear_codex_orchestrator.orchestrator.status_path", return_value=status):
+                update_issue_status(issue, "PR ready")
+                update_issue_codex_approval("ENG-1", pr, stale_approval)
+                update_pr_status(pr, "Codex approved", issue="ENG-1", codex_approval=stale_approval)
+                asyncio.run(orchestrator.process_pr_feedback("web", repo, pr))
+                payload = read_status()
+                seen = read_processed_feedback(lock_dir / "pr-feedback-state" / "acme__web-12.json")
+
+        pr_status = payload["prs"]["acme/web#12"]
+        self.assertEqual(pr_status["status"], "Feedback found")
+        self.assertEqual(pr_status["feedback_count"], 1)
+        self.assertEqual(payload["issues"]["ENG-1"]["status"], "PR ready")
+        self.assertEqual(payload["issues"]["ENG-1"]["pr_feedback"], "acme/web#12: Feedback found (1 item)")
+        self.assertNotIn("codex_approved", pr_status)
+        self.assertNotIn("codex_approved", payload["issues"]["ENG-1"])
+        self.assertEqual(seen, set())
 
     def test_process_pr_feedback_keeps_unmapped_codex_approval_in_pr_status(self) -> None:
         pr = OpenPullRequest(

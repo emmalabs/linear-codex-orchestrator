@@ -17,7 +17,7 @@ The orchestrator runs a local control loop that coordinates Linear, Codex, Git, 
 
 On each tick it:
 
-1. Checks open GitHub PRs whose branch starts with the configured PR feedback branch prefix (`codex/` by default) and processes any new comments or review feedback.
+1. Checks open GitHub PRs whose branch starts with the configured PR feedback branch prefix (`codex/` by default) and processes any new comments, review feedback, or failed GitHub Actions checks.
 2. Looks for resumable Linear issues in the configured in-progress status that still carry the running label.
 3. If nothing is being resumed, polls Linear for eligible Todo issues, optionally filtered by the configured ready label.
 
@@ -34,11 +34,11 @@ For each Linear issue, the orchestrator:
 
 If a daemon run is interrupted after an issue was moved to the in-progress state, the next tick first searches for issues with the configured running label, checks out the existing branch in each configured repo, and resumes from the current working tree instead of starting from the base branch again.
 
-PR feedback handling is separate from the issue implementation flow. For each open matching PR, the orchestrator records which GitHub issue comments, review comments, and reviews it has already processed. New feedback checks out the PR branch, runs Codex with the feedback-focused prompt, commits and pushes any fixes, and comments back on the PR with the result.
+PR feedback handling is separate from the issue implementation flow. For each open matching PR, the orchestrator records which GitHub issue comments, review comments, reviews, and failed GitHub Actions checks it has already processed. When it finds new feedback or failed checks, it checks out the PR branch, runs Codex with the feedback-focused prompt, commits and pushes any fixes, and comments back on the PR with the result.
 
 ## Recommended Human Workflow
 
-It is good practice to enable GitHub reviews on orchestrator PRs. The orchestrator checks open PRs for new GitHub review comments, issue comments, and submitted reviews, then uses Codex to address that feedback and push follow-up fixes.
+It is good practice to enable GitHub reviews on orchestrator PRs. The orchestrator checks open PRs for new GitHub review comments, issue comments, submitted reviews, and failed GitHub Actions checks, then uses Codex to address that feedback and push follow-up fixes.
 
 A typical human workflow is:
 
@@ -104,7 +104,7 @@ For code hot reload while developing the orchestrator, run:
 
 Then open `http://127.0.0.1:5173`. Frontend changes hot-reload through Vite. Python changes under `src/` restart the backend daemon automatically between runs.
 
-Each normal tick first checks open `codex/` PRs for new GitHub comments and review feedback, then polls Linear for new implementation work.
+Each normal tick first checks open `codex/` PRs for new GitHub comments, review feedback, and failed GitHub Actions checks, then polls Linear for new implementation work.
 
 Run only the PR feedback worker:
 

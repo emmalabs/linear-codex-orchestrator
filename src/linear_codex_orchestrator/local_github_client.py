@@ -157,6 +157,20 @@ class LocalGitHubClient:
             if feedback.body.strip() and PR_FEEDBACK_COMMENT_MARKER not in feedback.body
         ]
 
+    async def pr_failed_checks(
+        self,
+        repo: str,
+        number: int,
+        head_sha: str,
+    ) -> list[PullRequestFeedback]:
+        if not head_sha:
+            return []
+        return failed_check_feedback(
+            _gh_api_json(f"repos/{repo}/commits/{head_sha}/check-runs?filter=latest&per_page=100", paginate=True),
+            repo=repo,
+            number=number,
+        )
+
     async def pr_codex_approvals(self, repo: str, number: int) -> list[PullRequestApproval]:
         return codex_approval_reviews(
             _gh_api_json(f"repos/{repo}/pulls/{number}/reviews?per_page=100", paginate=True)
@@ -289,6 +303,59 @@ def codex_approval_reviews(items: list[dict[str, object]]) -> list[PullRequestAp
             )
         )
     return approvals
+
+
+def failed_check_feedback(
+    items: list[dict[str, object]],
+    *,
+    repo: str,
+    number: int,
+) -> list[PullRequestFeedback]:
+    feedback: list[PullRequestFeedback] = []
+    for item in items:
+        check_runs = item.get("check_runs") if isinstance(item, dict) else None
+        candidates = check_runs if isinstance(check_runs, list) else [item]
+        for check_run in candidates:
+            if not isinstance(check_run, dict):
+                continue
+            status = str(check_run.get("status") or "")
+            conclusion = str(check_run.get("conclusion") or "")
+            if status != "completed" or conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+                continue
+            check_id = str(check_run.get("id") or check_run.get("node_id") or check_run.get("name") or "unknown")
+            updated_at = str(
+                check_run.get("completed_at")
+                or check_run.get("updated_at")
+                or check_run.get("started_at")
+                or ""
+            )
+            name = str(check_run.get("name") or "Unnamed check")
+            details_url = str(check_run.get("details_url") or check_run.get("html_url") or "")
+            started_at = str(check_run.get("started_at") or "")
+            completed_at = str(check_run.get("completed_at") or "")
+            body = "\n".join(
+                line
+                for line in (
+                    f"Check run `{name}` failed for PR #{number}.",
+                    f"Status: {status}",
+                    f"Conclusion: {conclusion}",
+                    f"Started: {started_at}" if started_at else "",
+                    f"Completed: {completed_at}" if completed_at else "",
+                    f"Details: {details_url}" if details_url else "",
+                    "Inspect the GitHub Actions logs for this check run and fix failures caused by the PR branch.",
+                )
+                if line
+            )
+            feedback.append(
+                PullRequestFeedback(
+                    key=f"check-run:{check_id}:{updated_at}:{conclusion}",
+                    kind="failed GitHub Actions check",
+                    author="github-actions",
+                    body=body,
+                    url=details_url or f"https://github.com/{repo}/pull/{number}/checks",
+                )
+            )
+    return feedback
 
 
 def _run(command: list[str]) -> str:

@@ -228,9 +228,15 @@ class Orchestrator:
             )
             mapped_issue = issue_identifier_for_pr(pr)
             feedback = await self.github.pr_feedback(repo.github, pr.number)
+            failed_checks = await pr_failed_checks(
+                self.github,
+                repo.github,
+                pr.number,
+                getattr(pr, "head_sha", ""),
+            )
             state = pr_feedback_state(self.settings.lock_dir, repo.github, pr.number)
             seen = read_processed_feedback(state)
-            new_feedback = [item for item in feedback if item.key not in seen]
+            new_feedback = [item for item in feedback + failed_checks if item.key not in seen]
             issue_identifier = pr_feedback_issue_identifier(pr)
             if not new_feedback:
                 log(f"{repo.github}#{pr.number}: no new PR feedback")
@@ -265,7 +271,7 @@ class Orchestrator:
                         clear_codex_approval=True,
                     )
                 return
-            log(f"{repo.github}#{pr.number}: found {len(new_feedback)} new feedback item(s)")
+            log(f"{repo.github}#{pr.number}: found {len(new_feedback)} new PR feedback or failed check item(s)")
             issue_identifier = issue_identifier or mapped_issue
             if issue_identifier:
                 ensure_issue_pr_feedback_status(issue_identifier, pr)
@@ -1761,6 +1767,20 @@ async def latest_codex_approval(
     if not approvals:
         return None
     return max(approvals, key=lambda item: item.submitted_at or item.key)
+
+
+async def pr_failed_checks(
+    github: object,
+    repo: str,
+    number: int,
+    head_sha: str = "",
+) -> list[PullRequestFeedback]:
+    failed_checks = getattr(github, "pr_failed_checks", None)
+    if not callable(failed_checks):
+        return []
+    if not head_sha:
+        return []
+    return await failed_checks(repo, number, head_sha)
 
 
 def update_pr_feedback_status(
